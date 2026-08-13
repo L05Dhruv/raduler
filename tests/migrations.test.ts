@@ -22,8 +22,48 @@ import { readFileSync } from "node:fs";
 import { PGlite } from "@electric-sql/pglite";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
-const migration = (name: string) =>
-  readFileSync(new URL(`../supabase/migrations/${name}`, import.meta.url), "utf8");
+const sqlFile = (relative: string) =>
+  readFileSync(new URL(`../supabase/${relative}`, import.meta.url), "utf8");
+const migration = (name: string) => sqlFile(`migrations/${name}`);
+
+/**
+ * The files a fresh install runs, in the order the README documents. 0002-0004 repair
+ * projects created before those defects were found; 0001 was corrected in place, so they
+ * are not replayed.
+ */
+const INSTALL_ORDER = [
+  "0001_init.sql",
+  "0005_flexible_hours.sql",
+  "0006_timezones.sql",
+  "0007_person_rates.sql",
+];
+
+/**
+ * The pieces of Supabase the migrations lean on. The real `auth.uid()` reads a JWT claim;
+ * this reads a session GUC so one connection can act as different people.
+ *
+ * The time zone is pinned to UTC because a PostgREST connection runs there and PGlite would
+ * otherwise inherit whatever the developer's machine is set to — the date-boundary defect
+ * 0006 fixes is invisible on a machine that happens to sit in the practice's zone.
+ */
+const AUTH_STUB = `
+  create schema auth;
+  create table auth.users (
+    id uuid primary key,
+    email text not null,
+    raw_user_meta_data jsonb not null default '{}'::jsonb
+  );
+  create or replace function auth.uid() returns uuid language sql stable as $fn$
+    select nullif(current_setting('app.test_uid', true), '')::uuid
+  $fn$;
+  do $do$ begin
+    if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon; end if;
+    if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+      create role authenticated;
+    end if;
+  end $do$;
+  set time zone 'UTC';
+`;
 
 const ALICE = "11111111-1111-1111-1111-111111111111"; // radiologist, holds the shifts
 const BOB = "22222222-2222-2222-2222-222222222222"; // radiologist, holds nothing
@@ -70,41 +110,8 @@ const minutesFor = async (profile: string) => {
 beforeAll(async () => {
   db = new PGlite();
 
-  // Stub only what the migrations reference. The real auth.uid() reads a JWT claim;
-  // this reads a session GUC so one connection can act as different people.
-  await db.exec(`
-    create schema auth;
-    create table auth.users (
-      id uuid primary key,
-      email text not null,
-      raw_user_meta_data jsonb not null default '{}'::jsonb
-    );
-    create or replace function auth.uid() returns uuid language sql stable as $fn$
-      select nullif(current_setting('app.test_uid', true), '')::uuid
-    $fn$;
-  `);
-
-  for (const role of ["anon", "authenticated"]) {
-    await db.exec(`
-      do $do$ begin
-        if not exists (select 1 from pg_roles where rolname = '${role}') then
-          create role ${role};
-        end if;
-      end $do$;
-    `);
-  }
-
-  // A PostgREST connection runs in UTC, and PGlite would otherwise inherit whatever the
-  // developer's machine is set to. Pinning it matters: the date-boundary defect that
-  // 0006 fixes is invisible on a machine that happens to sit in the practice's zone.
-  await db.exec("set time zone 'UTC'");
-
-  // A fresh install runs these. 0002-0004 repair projects created before those defects
-  // were found; 0001 was corrected in place, so they are not replayed here.
-  await db.exec(migration("0001_init.sql"));
-  await db.exec(migration("0005_flexible_hours.sql"));
-  await db.exec(migration("0006_timezones.sql"));
-  await db.exec(migration("0007_person_rates.sql"));
+  await db.exec(AUTH_STUB);
+  for (const file of INSTALL_ORDER) await db.exec(migration(file));
 
   // Inserting into auth.users fires the profile trigger from 0001.
   await db.exec(`
@@ -129,6 +136,135 @@ beforeAll(async () => {
        '2026-09-02T00:00:00Z', 'radiologist');
   `);
 }, 120_000);
+
+/**
+ * The install order the README documents, run from an empty database.
+ *
+ * On its own instance rather than the shared one, because `seed.sql` adds 272 shifts and
+ * four teams and every count assertion in the rest of this file would then be measuring
+ * them instead of its own fixtures.
+ *
+ * This exists because the order is a fact about five separate files that nothing else
+ * checks. A migration added out of sequence, or one that assumes a column a later file
+ * drops, or a seed that still supplies a column that no longer exists, fails here rather
+ * than in somebody's SQL editor halfway through a deploy.
+ */
+describe("the documented install order", () => {
+  let install: PGlite;
+
+  const value = async <T>(sql: string): Promise<T> => {
+    const result = await install.query<Record<string, T>>(sql);
+    return Object.values(result.rows[0])[0];
+  };
+
+  beforeAll(async () => {
+    install = new PGlite();
+    await install.exec(AUTH_STUB);
+    for (const file of INSTALL_ORDER) await install.exec(migration(file));
+    await install.exec(sqlFile("seed.sql"));
+    // The operator step the README calls out separately: schema and configuration are not
+    // the same thing, and the anchor is UTC until this is set.
+    await install.exec(`set app.practice_timezone = 'America/Toronto'`);
+  }, 120_000);
+
+  it("creates the four teams, Paediatrics among them", async () => {
+    const teams = await install.query<{ name: string }>(
+      "select name from public.teams order by name",
+    );
+    expect(teams.rows.map((t) => t.name)).toEqual([
+      "Body Imaging",
+      "Emergency Radiology",
+      "Neuro",
+      "Paediatrics",
+    ]);
+  });
+
+  it("publishes a roster with no mammography left in it", async () => {
+    const titles = await install.query<{ title: string }>(
+      "select distinct title from public.shifts order by title",
+    );
+    const names = titles.rows.map((t) => t.title);
+    expect(names).toContain("Peds Clinic");
+    expect(names).not.toContain("Screening Clinic");
+    expect(names).not.toContain("Mammo Clinic");
+    expect(await value<number>("select count(*)::int from public.shifts")).toBeGreaterThan(
+      200,
+    );
+  });
+
+  it("gives the paediatric clinic a modality and team that match its name", async () => {
+    const row = await install.query<{ modality: string; team: string }>(`
+      select s.modality, t.name as team
+      from public.shifts s join public.teams t on t.id = s.team_id
+      where s.title = 'Peds Clinic' limit 1
+    `);
+    expect(row.rows[0]).toEqual({ modality: "XR/US", team: "Paediatrics" });
+  });
+
+  it("leaves no shift rate column for the seed to have filled", async () => {
+    // The seed and 0007 have to agree on this. If 0007 stopped dropping the column, or the
+    // seed started supplying it again, one of them would fail on the other.
+    expect(
+      await value<number>(`
+        select count(*)::int from information_schema.columns
+        where table_schema = 'public' and table_name = 'shifts'
+          and column_name = 'hourly_rate_cents'
+      `),
+    ).toBe(0);
+  });
+
+  it("enables row level security on every table it creates", async () => {
+    const unprotected = await install.query<{ tablename: string }>(
+      "select tablename from pg_tables where schemaname = 'public' and not rowsecurity",
+    );
+    expect(unprotected.rows.map((r) => r.tablename)).toEqual([]);
+  });
+
+  it("grants anon nothing in public, seeded data included", async () => {
+    const leaks = await install.query(`
+      select table_name from information_schema.role_table_grants
+      where grantee = 'anon' and table_schema = 'public'
+    `);
+    expect(leaks.rows).toEqual([]);
+  });
+
+  it("resolves the practice zone once an operator sets it", async () => {
+    expect(await value<string>("select public.practice_timezone()")).toBe(
+      "America/Toronto",
+    );
+  });
+
+  it("creates nobody — accounts come from real signups", async () => {
+    // seed.sql deliberately does not invent profiles: they are minted by the trigger on
+    // auth.users, so the first administrator still has to be promoted by hand.
+    expect(await value<number>("select count(*)::int from public.profiles")).toBe(0);
+  });
+
+  it("applies as one transaction too, which is what a single paste becomes", async () => {
+    // The Supabase SQL editor runs a pasted script as one transaction. For a fresh install
+    // that is a feature — anything failing leaves nothing half-applied — but it only holds
+    // if no file needs its own transaction, which this is here to keep true.
+    const combined = new PGlite();
+    await combined.exec(AUTH_STUB);
+    await combined.exec(
+      [...INSTALL_ORDER.map(migration), sqlFile("seed.sql")].join("\n"),
+    );
+    const shifts = await combined.query<{ n: number }>(
+      "select count(*)::int as n from public.shifts",
+    );
+    expect(shifts.rows[0].n).toBeGreaterThan(200);
+  }, 120_000);
+
+  it("re-seeds cleanly after a reset", async () => {
+    // The path the README documents for an existing project. Running seed.sql twice without
+    // the reset would leave two rosters; with it, the count returns to where it was.
+    const before = await value<number>("select count(*)::int from public.shifts");
+    await install.exec(sqlFile("reset_seed.sql"));
+    expect(await value<number>("select count(*)::int from public.shifts")).toBe(0);
+    await install.exec(sqlFile("seed.sql"));
+    expect(await value<number>("select count(*)::int from public.shifts")).toBe(before);
+  }, 120_000);
+});
 
 describe("0001 — schema and triggers", () => {
   it("mints a profile for each new auth user", async () => {
