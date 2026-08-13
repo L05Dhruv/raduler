@@ -323,6 +323,43 @@
   animation: dialog-in var(--duration-enter) var(--ease-out) both;
 }
 
+/* Ambient light following the pointer. The defaults park it behind the card, so a
+   touch device, a reduced-motion preference, or no JS all degrade to the static
+   glow this replaced rather than to nothing. */
+.cursor-glow {
+  --glow-x: 50%;
+  --glow-y: 28%;
+
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: radial-gradient(
+    34rem 34rem at var(--glow-x) var(--glow-y),
+    color-mix(in oklch, var(--color-primary) 15%, transparent),
+    transparent 68%
+  );
+}
+
+/* Light mode has far less headroom above the surface, so the same intensity reads
+   as a smudge rather than a light. */
+[data-theme="raduler-light"] .cursor-glow {
+  background: radial-gradient(
+    34rem 34rem at var(--glow-x) var(--glow-y),
+    color-mix(in oklch, var(--color-primary) 9%, transparent),
+    transparent 68%
+  );
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* The loop never starts, but say so in CSS too in case the media query flips
+     while the page is open. */
+  .cursor-glow {
+    --glow-x: 50%;
+    --glow-y: 28%;
+  }
+}
+
 /* Frosted, so content scrolling beneath reads as depth rather than clutter. */
 @utility glass {
   background-color: color-mix(in oklch, var(--color-base-100) 78%, transparent);

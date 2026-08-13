@@ -7,6 +7,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { useAuth } from "@/contexts/AuthContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { CursorGlow } from "@/components/CursorGlow";
 import { Activity, ArrowRight, MailCheck, ShieldCheck, TriangleAlert } from "lucide-react";
 
 const schema = z.object({
@@ -42,19 +43,15 @@ export default function LoginPage() {
 
   return (
     <div className="relative grid min-h-dvh place-items-center overflow-hidden p-4">
-      {/* A single soft light source behind the card. Static — decorative motion on
-          a login screen is noise, and this page is often the first thing seen at
-          the start of a night shift. */}
-      <div
-        aria-hidden="true"
-        className="pointer-events-none absolute -top-40 left-1/2 h-[32rem] w-[32rem] -translate-x-1/2 rounded-full bg-primary/12 blur-3xl"
-      />
+      {/* A single soft light source that follows the pointer. It sits behind
+          everything and never takes clicks. */}
+      <CursorGlow />
 
-      <div className="absolute right-4 top-4">
+      <div className="absolute right-4 top-4 z-10">
         <ThemeToggle />
       </div>
 
-      <div className="surface dialog-enter relative w-full max-w-md p-7">
+      <div className="surface dialog-enter relative z-10 w-full max-w-md p-7">
         <div className="flex items-center gap-2.5">
           <span className="grid h-9 w-9 place-items-center rounded-selector bg-primary text-primary-content">
             <Activity className="h-5 w-5" aria-hidden="true" />
