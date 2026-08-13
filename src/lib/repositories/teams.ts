@@ -74,7 +74,7 @@ export async function updateProfileAsAdmin(
   if (error) throw new Error(error.message);
 }
 
-/** A user renaming themselves — the only columns they hold an UPDATE grant on. */
+/** A user renaming themselves — among the few columns they hold an UPDATE grant on. */
 export async function updateOwnProfile(
   profileId: string,
   fields: { full_name: string; modality: string | null },
@@ -82,6 +82,23 @@ export async function updateOwnProfile(
   const { error } = await getSupabase()
     .from("profiles")
     .update(fields)
+    .eq("id", profileId);
+  if (error) throw new Error(error.message);
+}
+
+/**
+ * The person's preferred display zone. Null restores "follow the practice".
+ *
+ * A trigger validates the name against `pg_timezone_names`, so a typo is refused here
+ * rather than quietly rendering every time in the week wrong.
+ */
+export async function updateOwnTimezone(
+  profileId: string,
+  timezone: string | null,
+): Promise<void> {
+  const { error } = await getSupabase()
+    .from("profiles")
+    .update({ timezone })
     .eq("id", profileId);
   if (error) throw new Error(error.message);
 }

@@ -6,7 +6,11 @@ import {
   timeOffOnDay,
 } from "@/lib/calendar";
 import { toDateInput } from "@/lib/format";
+import { addDaysToKey, dayKeyInZone, wallClockToInstant } from "@/lib/timezone";
 import type { ShiftWithAssignment, TimeOff } from "@/types/db";
+
+const TORONTO = "America/Toronto";
+const VANCOUVER = "America/Vancouver";
 
 function shift(partial: Partial<ShiftWithAssignment>): ShiftWithAssignment {
   return {
@@ -31,46 +35,93 @@ function shift(partial: Partial<ShiftWithAssignment>): ShiftWithAssignment {
 describe("buildMonthGrid", () => {
   it("always covers whole weeks", () => {
     for (const month of [new Date(2026, 1, 15), new Date(2026, 7, 1), new Date(2026, 10, 30)]) {
-      expect(buildMonthGrid(month).days.length % 7).toBe(0);
+      expect(buildMonthGrid(month, TORONTO).days.length % 7).toBe(0);
     }
   });
 
   it("starts on the Sunday on or before the first of the month", () => {
     // 1 March 2026 is a Sunday, so the grid starts exactly there.
-    const grid = buildMonthGrid(new Date(2026, 2, 15));
+    const grid = buildMonthGrid(new Date(2026, 2, 15), TORONTO);
     expect(grid.days[0].getDay()).toBe(0);
     expect(toDateInput(grid.days[0])).toBe("2026-03-01");
   });
 
-  it("ends one day past the final visible cell so the range is exclusive", () => {
-    const grid = buildMonthGrid(new Date(2026, 2, 15));
-    const lastDay = grid.days[grid.days.length - 1];
-    expect(grid.rangeEnd.getTime() - lastDay.getTime()).toBe(24 * 60 * 60 * 1000);
-  });
-
   it("handles a February that fits in exactly four weeks", () => {
     // February 2027 starts on a Monday and has 28 days, the tightest case.
-    const grid = buildMonthGrid(new Date(2027, 1, 10));
+    const grid = buildMonthGrid(new Date(2027, 1, 10), TORONTO);
     expect(grid.days.length % 7).toBe(0);
     expect(grid.days.some((d) => toDateInput(d) === "2027-02-28")).toBe(true);
+  });
+
+  describe("query bounds", () => {
+    it("starts at the first cell's midnight in the grid's zone", () => {
+      const grid = buildMonthGrid(new Date(2026, 2, 15), TORONTO);
+      // 1 March 2026, 00:00 EST is 05:00 UTC.
+      expect(grid.rangeStart.toISOString()).toBe("2026-03-01T05:00:00.000Z");
+      expect(dayKeyInZone(grid.rangeStart, TORONTO)).toBe("2026-03-01");
+    });
+
+    it("shifts with the zone, because midnight is not one moment", () => {
+      const month = new Date(2026, 2, 15);
+      const toronto = buildMonthGrid(month, TORONTO);
+      const vancouver = buildMonthGrid(month, VANCOUVER);
+      expect(vancouver.rangeStart.getTime() - toronto.rangeStart.getTime()).toBe(
+        3 * 60 * 60 * 1000,
+      );
+      // The squares themselves are the same calendar days either way.
+      expect(vancouver.days.map(toDateInput)).toEqual(toronto.days.map(toDateInput));
+    });
+
+    it("ends one day past the final cell so the range is exclusive", () => {
+      const grid = buildMonthGrid(new Date(2026, 2, 15), TORONTO);
+      const lastCell = toDateInput(grid.days[grid.days.length - 1]);
+      expect(dayKeyInZone(grid.rangeEnd, TORONTO)).toBe(addDaysToKey(lastCell, 1));
+    });
+
+    it("spans an hour less than its day count over a spring-forward", () => {
+      // March 2026 contains Toronto's transition, so the window really is an hour short
+      // of a whole number of days. Stepping the bound in 24-hour increments instead of
+      // through the zone would put it an hour into the next day and pull in extra shifts.
+      const grid = buildMonthGrid(new Date(2026, 2, 15), TORONTO);
+      const span = grid.rangeEnd.getTime() - grid.rangeStart.getTime();
+      expect(span).toBe((grid.days.length * 24 - 1) * 60 * 60 * 1000);
+    });
   });
 });
 
 describe("groupShiftsByDay", () => {
-  it("buckets by local calendar day", () => {
-    const local = new Date(2026, 2, 2, 9, 0).toISOString();
-    const grouped = groupShiftsByDay([shift({ id: "a", starts_at: local })]);
+  it("buckets by the calendar day in the given zone", () => {
+    const instant = wallClockToInstant("2026-03-02", "09:00", TORONTO)!.toISOString();
+    const grouped = groupShiftsByDay([shift({ id: "a", starts_at: instant })], TORONTO);
     expect(grouped.get("2026-03-02")?.map((s) => s.id)).toEqual(["a"]);
   });
 
   it("keeps several shifts on the same day together", () => {
-    const day = new Date(2026, 2, 2, 8, 0).toISOString();
-    const later = new Date(2026, 2, 2, 17, 0).toISOString();
-    const grouped = groupShiftsByDay([
-      shift({ id: "a", starts_at: day }),
-      shift({ id: "b", starts_at: later }),
-    ]);
+    const morning = wallClockToInstant("2026-03-02", "08:00", TORONTO)!.toISOString();
+    const evening = wallClockToInstant("2026-03-02", "17:00", TORONTO)!.toISOString();
+    const grouped = groupShiftsByDay(
+      [shift({ id: "a", starts_at: morning }), shift({ id: "b", starts_at: evening })],
+      TORONTO,
+    );
     expect(grouped.get("2026-03-02")).toHaveLength(2);
+  });
+
+  it("moves a late shift to the next square when read far enough east", () => {
+    // 21:00 Toronto on the 2nd is 02:00 London on the 3rd. Someone reading the roster in
+    // London should find it on the 3rd — that is what viewing in another zone means.
+    const instant = wallClockToInstant("2026-03-02", "21:00", TORONTO)!.toISOString();
+    const s = [shift({ id: "late", starts_at: instant })];
+    expect(groupShiftsByDay(s, TORONTO).get("2026-03-02")?.[0].id).toBe("late");
+    expect(groupShiftsByDay(s, "Europe/London").get("2026-03-03")?.[0].id).toBe("late");
+    expect(groupShiftsByDay(s, "Europe/London").get("2026-03-02")).toBeUndefined();
+  });
+
+  it("moves an early shift to the previous square when read far enough west", () => {
+    // 01:00 Toronto on the 3rd is 22:00 Vancouver on the 2nd.
+    const instant = wallClockToInstant("2026-03-03", "01:00", TORONTO)!.toISOString();
+    const s = [shift({ id: "early", starts_at: instant })];
+    expect(groupShiftsByDay(s, TORONTO).get("2026-03-03")?.[0].id).toBe("early");
+    expect(groupShiftsByDay(s, VANCOUVER).get("2026-03-02")?.[0].id).toBe("early");
   });
 });
 

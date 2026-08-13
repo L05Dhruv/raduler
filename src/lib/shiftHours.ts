@@ -1,4 +1,10 @@
-import { formatTimeRange, minutesBetween } from "@/lib/format";
+import { minutesBetween } from "@/lib/format";
+import {
+  addDaysToKey,
+  dayKeyInZone,
+  formatTimeRangeInZone,
+  wallClockToInstant,
+} from "@/lib/timezone";
 
 /**
  * Resolving a chosen `HH:mm` pair against a published shift.
@@ -12,9 +18,9 @@ import { formatTimeRange, minutesBetween } from "@/lib/format";
  *   * **Shifts that cross midnight.** A time input yields a bare `HH:mm`, which is
  *     ambiguous for a 22:00-06:00 shift: "02:00" means the following day. Each time is
  *     resolved to the first candidate day on which it lands inside the window.
- *   * **Daylight saving.** Times are built with the local `Date` constructor, so a
- *     window keeps its wall-clock hour across a transition instead of drifting — the
- *     same reason `expandPattern()` builds shifts that way.
+ *   * **Daylight saving.** Times are resolved through an explicit zone rather than the
+ *     browser's, so a window keeps its wall-clock hour across a transition instead of
+ *     drifting — the same reason `expandPattern()` works that way.
  */
 
 export interface HourWindow {
@@ -28,43 +34,37 @@ export type ResolvedHours =
 
 const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
 
-/** `HH:mm` in local time — the value an `<input type="time">` expects. */
-export function toTimeInput(date: Date): string {
-  const h = String(date.getHours()).padStart(2, "0");
-  const m = String(date.getMinutes()).padStart(2, "0");
-  return `${h}:${m}`;
-}
-
 /**
- * The day the shift starts, and the day after it. Anything a time input can express
- * lands inside a window of any length up to 24 hours on one of these two days, and
- * going through the `Date` constructor rather than adding milliseconds is what keeps
- * the wall-clock time intact over a DST boundary.
+ * The day the shift starts and the day after it, resolved in `zone`.
+ *
+ * Any time a `<input type="time">` can express falls inside a window of up to 24 hours on
+ * one of those two days. Resolving each through `wallClockToInstant` rather than adding
+ * milliseconds is what keeps the wall clock intact across a daylight-saving boundary.
  */
-function candidateTimes(anchor: Date, time: string): Date[] {
-  const [hour, minute] = time.split(":").map(Number);
-  return [0, 1].map(
-    (dayOffset) =>
-      new Date(
-        anchor.getFullYear(),
-        anchor.getMonth(),
-        anchor.getDate() + dayOffset,
-        hour,
-        minute,
-      ),
-  );
+function candidateTimes(anchor: Date, time: string, zone: string): Date[] {
+  const anchorKey = dayKeyInZone(anchor, zone);
+  return [0, 1]
+    .map((offset) => wallClockToInstant(addDaysToKey(anchorKey, offset), time, zone))
+    .filter((instant): instant is Date => instant !== null);
 }
 
 /**
  * Turns a chosen `HH:mm` pair into concrete instants inside the published window, or
  * explains why it does not fit. Endpoints are inclusive: working a shift exactly as
  * published is valid.
+ *
+ * `zone` is the zone the person is *reading in*, not the practice's. Someone looking at
+ * their roster from Vancouver sees a Toronto shift as 09:00–16:00 and will type "10:00"
+ * meaning ten in Vancouver. Interpreting that against the practice's clock would move
+ * their hours three hours from what they asked for. The database still checks the result
+ * against the published window, so no zone confusion can widen it.
  */
 export function resolveHours(
   shiftStartIso: string,
   shiftEndIso: string,
   startTime: string,
   endTime: string,
+  zone: string,
 ): ResolvedHours {
   if (!TIME_PATTERN.test(startTime) || !TIME_PATTERN.test(endTime)) {
     return { ok: false, reason: "Use a 24-hour time, like 13:00." };
@@ -72,9 +72,9 @@ export function resolveHours(
 
   const shiftStart = new Date(shiftStartIso);
   const shiftEnd = new Date(shiftEndIso);
-  const published = formatTimeRange(shiftStartIso, shiftEndIso);
+  const published = formatTimeRangeInZone(shiftStartIso, shiftEndIso, zone);
 
-  const start = candidateTimes(shiftStart, startTime).find(
+  const start = candidateTimes(shiftStart, startTime, zone).find(
     (c) => c >= shiftStart && c <= shiftEnd,
   );
   if (!start) {
@@ -86,7 +86,7 @@ export function resolveHours(
 
   // Strictly after the start, so a zero-length window is refused here rather than by
   // the table's assignment_actuals_order constraint.
-  const end = candidateTimes(shiftStart, endTime).find(
+  const end = candidateTimes(shiftStart, endTime, zone).find(
     (c) => c > start && c <= shiftEnd,
   );
   if (!end) {

@@ -25,8 +25,10 @@ import {
   MAX_PATTERN_SHIFTS,
   type ShiftPattern,
 } from "@/lib/shiftPattern";
+import { useTimeZone } from "@/contexts/TimeZoneContext";
 import { coverageGapMinutes } from "@/lib/shiftHours";
-import { formatCents, formatMinutes, formatTimeRange, toDateInput } from "@/lib/format";
+import { formatTimeRangeInZone, zoneAbbreviation } from "@/lib/timezone";
+import { formatCents, formatMinutes, toDateInput } from "@/lib/format";
 import { USER_ROLES } from "@/types/db";
 
 export default function AdminShiftsPage() {
@@ -60,6 +62,17 @@ const schema = z.object({
 type FormValues = z.input<typeof schema>;
 
 function AdminShifts() {
+  /**
+   * The roster is the practice's, so it is published and displayed in the practice's zone
+   * regardless of where the administrator is sitting. Before this, `expandPattern` built
+   * against the browser: publishing next month's roster from a conference in Vancouver
+   * would have created a set of 05:00 shifts with nothing to indicate it.
+   *
+   * `displayZone` is the fallback only for the moment before the practice zone arrives,
+   * and publishing is disabled until it does.
+   */
+  const { practiceZone, displayZone } = useTimeZone();
+  const rosterZone = practiceZone ?? displayZone;
   const [month, setMonth] = useState(() => new Date());
   const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
   const { run, toast } = useToast();
@@ -116,8 +129,9 @@ function AdminShifts() {
       startTime: v.startTime ?? "08:00",
       durationHours: Number(v.durationHours ?? 0),
       weekdays,
+      timezone: rosterZone,
     } satisfies ShiftPattern);
-  }, [v, weekdays]);
+  }, [v, weekdays, rosterZone]);
 
   const onSubmit = async (values: FormValues) => {
     const rows = expandPattern({
@@ -133,6 +147,7 @@ function AdminShifts() {
       startTime: values.startTime,
       durationHours: Number(values.durationHours),
       weekdays,
+      timezone: rosterZone,
     });
 
     if (rows.length === 0) {
@@ -193,7 +208,8 @@ function AdminShifts() {
           <h2 className="text-base font-semibold">Publish shifts</h2>
           <p className="text-sm text-base-content/70">
             Create one shift or a repeating pattern. Everything published here is open
-            for the matching role to claim.
+            for the matching role to claim. Times are the practice&rsquo;s own
+            ({rosterZone}), whatever zone you happen to be in.
           </p>
 
           <form onSubmit={handleSubmit(onSubmit)} className="mt-3 space-y-3" noValidate>
@@ -273,7 +289,7 @@ function AdminShifts() {
               <Field label="To">
                 <input type="date" className="input input-bordered w-full" {...register("to")} />
               </Field>
-              <Field label="Starts">
+              <Field label={`Starts (${zoneAbbreviation(rosterZone)})`}>
                 <input
                   type="time"
                   className="input input-bordered w-full"
@@ -325,11 +341,13 @@ function AdminShifts() {
             <button
               type="submit"
               className="btn btn-primary lift w-full"
-              disabled={isSubmitting || preview.length === 0}
+              disabled={isSubmitting || preview.length === 0 || !practiceZone}
             >
               {isSubmitting
                 ? "Publishing…"
-                : `Publish ${preview.length} shift${preview.length === 1 ? "" : "s"}`}
+                : !practiceZone
+                  ? "Reading the practice time zone…"
+                  : `Publish ${preview.length} shift${preview.length === 1 ? "" : "s"}`}
             </button>
           </form>
         </div>
@@ -368,6 +386,12 @@ function AdminShifts() {
           </div>
 
           <div className="flex items-center gap-2 pr-1 text-sm">
+            <span
+              className="text-base-content/55"
+              title={`The roster is shown in the practice's zone, ${rosterZone}`}
+            >
+              {zoneAbbreviation(rosterZone)}
+            </span>
             <span className="text-base-content/60">
               {shifts.length} shift{shifts.length === 1 ? "" : "s"}
             </span>
@@ -426,7 +450,7 @@ function AdminShifts() {
                     </td>
                     <td>{shift.title}</td>
                     <td className="whitespace-nowrap">
-                      {formatTimeRange(shift.starts_at, shift.ends_at)}
+                      {formatTimeRangeInZone(shift.starts_at, shift.ends_at, rosterZone)}
                     </td>
                     <td>{shift.required_role}</td>
                     <td className="whitespace-nowrap">
@@ -443,9 +467,10 @@ function AdminShifts() {
                       {held && gap > 0 && (
                         <span
                           className="badge badge-warning badge-sm ml-1 tabular-nums"
-                          title={`Working ${formatTimeRange(
+                          title={`Working ${formatTimeRangeInZone(
                             held.actual_start ?? shift.starts_at,
                             held.actual_end ?? shift.ends_at,
+                            rosterZone,
                           )} — ${formatMinutes(gap)} of the published shift is unstaffed`}
                         >
                           {formatMinutes(gap)} open

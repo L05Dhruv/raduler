@@ -47,7 +47,8 @@ the SQL editor run, in order:
 
 1. `supabase/migrations/0001_init.sql` — tables, grants, RLS policies, RPCs, audit log
 2. `supabase/migrations/0005_flexible_hours.sql` — per-day hours within a published shift
-3. `supabase/seed.sql` — four teams and eight weeks of open shifts (optional)
+3. `supabase/migrations/0006_timezones.sql` — time zones, and the reporting-period anchor
+4. `supabase/seed.sql` — four teams and eight weeks of open shifts (optional)
 
 (`0002`–`0004` fix privileges on projects created before those defects were found. `0001`
 was corrected in place, so a fresh install skips them — see the header of each file.)
@@ -58,6 +59,17 @@ Then under **Authentication → URL Configuration**, add both redirect URLs:
 http://localhost:3000/**
 https://l05dhruv.github.io/raduler/**
 ```
+
+**Set the practice's time zone.** Until you do, every reporting period runs on UTC days,
+which is not where the practice is:
+
+```sql
+alter database postgres set app.practice_timezone = 'America/Toronto';
+```
+
+This is the zone shifts are published in and the zone a month boundary falls on. It is
+read by `hours_summary()` and `create_invoice()` and served to the browser through
+`practice_timezone()`, so there is one source for it rather than two that can drift.
 
 Restrict who may sign up (recommended before showing this to anyone):
 
@@ -115,10 +127,13 @@ src/
 │  ├─ my-schedule/           claimed shifts, chosen hours and running hours
 │  ├─ time-off/              request and withdraw blackout dates
 │  └─ admin/                 shifts · time-off queue · teams · reports · invoices
-├─ components/               AppShell and the auth guards
-├─ contexts/AuthContext.tsx  session, profile, and the idle sign-out
+├─ components/               AppShell, auth guards, travel banner, zone picker
+├─ contexts/
+│  ├─ AuthContext.tsx        session, profile, and the idle sign-out
+│  └─ TimeZoneContext.tsx    resolves which zone times are rendered in
 ├─ lib/
 │  ├─ repositories/          the only modules that talk to Supabase
+│  ├─ timezone.ts            zone maths: day keys, wall clock ↔ instant, DST
 │  ├─ calendar.ts            month-grid maths
 │  ├─ shiftPattern.ts        expands a recurring pattern into shifts
 │  ├─ shiftHours.ts          resolves chosen hours inside a published shift
@@ -133,7 +148,7 @@ tests/
 **The migration tests are the important ones.** Authorisation lives in Postgres, so the
 checks that matter cannot be written in TypeScript: which column a user holds `UPDATE`
 on, whether an RPC refuses the wrong caller, whether one radiologist can read another's
-invoice. `tests/migrations.test.ts` runs `0001` and `0005` against PostgreSQL compiled to
+invoice. `tests/migrations.test.ts` runs `0001`, `0005` and `0006` against PostgreSQL compiled to
 WebAssembly ([PGlite](https://pglite.dev)) — the real engine, not a mock — with
 Supabase's `auth` schema stubbed, then asserts each rule.
 
@@ -165,10 +180,37 @@ these columns, so an unbounded self-service edit would be a self-service pay ris
 the admin roster counts shifts left partly unstaffed — narrowing your hours does not
 reopen the remainder, and somebody has to notice the hole.
 
-**Time zones.** Recurring shifts and chosen hours are both built from local wall-clock
-times, so a pattern that crosses a daylight-saving boundary keeps its 08:00 start
-instead of drifting, and an overnight shift's "02:00" resolves to the following day.
-There are tests for both.
+**Three time zones, kept apart.** Conflating them is how scheduling software gets this
+wrong, so each has one job:
+
+- **The practice zone** — where the work happens, held as a database setting. A shift
+  published as 08:00 is 08:00 here whoever reads it, and a reporting period runs midnight
+  to midnight here. `expandPattern()` builds against it, so an administrator publishing
+  next month's roster from a conference elsewhere produces the same roster.
+- **A person's home zone** — `profiles.timezone`, which they set themselves. Presentation
+  only; nothing in the money path reads it.
+- **The zone someone is reading in right now.** Session-scoped, browser-only, and never
+  sent to the database — a total that moved because its reader boarded a plane would be
+  indefensible.
+
+Travelling is offered rather than applied. If the device's clock differs from the one in
+use, a banner asks; accepting sets a session override that expires with the tab, because a
+persisted "I am in Vancouver" is a setting people forget to change back, and a stale one is
+worse than none.
+
+**The reporting boundary was wrong, and 0006 fixes it.** `timestamptz::date` resolves in
+the session's zone, and a PostgREST connection runs in UTC — so a shift worked 20:00–23:00
+on 31 August in Toronto was counted in September, by the report, the invoice and the
+approved-leave check alike. Expect figures near a month boundary to differ from ones issued
+before that migration ran. There is a test that demonstrates the defect by removing the
+anchor.
+
+**Daylight saving is handled where it happens.** `wallClockToInstant()` resolves each day
+independently rather than stepping in 24-hour increments, so a run across a transition
+keeps its 08:00 start; a time that does not exist (02:30 on a spring-forward morning) moves
+forward past the gap, and one that happens twice resolves to its first occurrence. An
+eight-hour shift spanning a transition stays eight elapsed hours, because that is what was
+worked and what gets paid.
 
 ## Licence
 

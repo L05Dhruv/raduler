@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import useSWR from "swr";
-import { addMonths, format, isSameMonth, isToday, subMonths } from "date-fns";
+import { addMonths, format, isSameMonth, subMonths } from "date-fns";
 import { CalendarX2, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { AppShell } from "@/components/AppShell";
@@ -11,6 +11,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonCalendar } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTimeZone } from "@/contexts/TimeZoneContext";
 import { listShifts, claimShift, releaseShift } from "@/lib/repositories/shifts";
 import { listTimeOff } from "@/lib/repositories/timeOff";
 import {
@@ -20,7 +21,12 @@ import {
   timeOffOnDay,
   type ShiftAvailability,
 } from "@/lib/calendar";
-import { formatCents, formatTimeRange, toDateInput } from "@/lib/format";
+import { formatCents, toDateInput } from "@/lib/format";
+import {
+  formatTimeRangeInZone,
+  todayKeyInZone,
+  zoneAbbreviation,
+} from "@/lib/timezone";
 import type { ShiftWithAssignment } from "@/types/db";
 
 export default function CalendarPage() {
@@ -39,16 +45,20 @@ const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 function Calendar() {
   const { profile } = useAuth();
+  const { displayZone, practiceZone, viewingElsewhere } = useTimeZone();
   const { run } = useToast();
   const [month, setMonth] = useState(() => new Date());
   const [busyShiftId, setBusyShiftId] = useState<string | null>(null);
   const [justClaimedId, setJustClaimedId] = useState<string | null>(null);
   const [onlyEligible, setOnlyEligible] = useState(true);
 
-  const grid = useMemo(() => buildMonthGrid(month), [month]);
-  const monthKey = toDateInput(grid.rangeStart);
+  // The zone decides both the query bounds and which square a shift lands in, so it is
+  // part of the grid and part of the cache key. Switching zones re-buckets rather than
+  // showing yesterday's arrangement with today's labels.
+  const grid = useMemo(() => buildMonthGrid(month, displayZone), [month, displayZone]);
+  const monthKey = toDateInput(grid.days[0]);
 
-  const shiftsQuery = useSWR(["shifts", monthKey], () =>
+  const shiftsQuery = useSWR(["shifts", monthKey, displayZone], () =>
     listShifts(grid.rangeStart, grid.rangeEnd),
   );
   const timeOffQuery = useSWR(profile ? ["time-off", profile.id] : null, () =>
@@ -56,7 +66,11 @@ function Calendar() {
   );
 
   const shifts = useMemo(() => shiftsQuery.data ?? [], [shiftsQuery.data]);
-  const shiftsByDay = useMemo(() => groupShiftsByDay(shifts), [shifts]);
+  const shiftsByDay = useMemo(
+    () => groupShiftsByDay(shifts, displayZone),
+    [shifts, displayZone],
+  );
+  const todayKey = todayKeyInZone(displayZone);
 
   const act = async (shift: ShiftWithAssignment, action: "claim" | "release") => {
     setBusyShiftId(shift.id);
@@ -115,6 +129,22 @@ function Calendar() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          {/* Which clock these times are on. Always stated, because a roster with
+              unlabelled times is only unambiguous until somebody travels. */}
+          <span
+            className={`rounded-field px-2 py-1 text-xs ${
+              viewingElsewhere
+                ? "bg-warning/15 text-warning"
+                : "text-base-content/55"
+            }`}
+            title={
+              viewingElsewhere && practiceZone
+                ? `Times shown in ${displayZone}. The practice publishes in ${practiceZone}.`
+                : `Times shown in ${displayZone}`
+            }
+          >
+            times in {zoneAbbreviation(displayZone)}
+          </span>
           <Stat label="open to you" value={openCount} tone="primary" />
           <Stat label="yours" value={mineCount} tone="success" />
           <label className="flex cursor-pointer items-center gap-2 rounded-field px-2 py-1 text-sm text-base-content/70 transition-colors hover:bg-base-300/40">
@@ -173,7 +203,9 @@ function Calendar() {
                 const away = timeOffOnDay(day, timeOffQuery.data ?? []);
                 const outsideMonth = !isSameMonth(day, month);
                 const approvedAway = away.some((a) => a.status === "approved");
-                const today = isToday(day);
+                // "Today" is a question about a calendar, so it has to be asked in the
+                // zone the calendar is drawn in.
+                const today = key === todayKey;
 
                 return (
                   <div
@@ -223,6 +255,7 @@ function Calendar() {
                             key={shift.id}
                             shift={shift}
                             state={state}
+                            zone={displayZone}
                             busy={busyShiftId === shift.id}
                             justClaimed={justClaimedId === shift.id}
                             onClaim={() => void act(shift, "claim")}
@@ -294,6 +327,7 @@ const CHIP_STYLES: Record<ShiftAvailability, string> = {
 function ShiftChip({
   shift,
   state,
+  zone,
   busy,
   justClaimed,
   onClaim,
@@ -301,6 +335,7 @@ function ShiftChip({
 }: {
   shift: ShiftWithAssignment;
   state: ShiftAvailability;
+  zone: string;
   busy: boolean;
   justClaimed: boolean;
   onClaim: () => void;
@@ -318,7 +353,7 @@ function ShiftChip({
         {shift.title}
       </div>
       <div className="tabular-nums text-base-content/65">
-        {formatTimeRange(shift.starts_at, shift.ends_at)}
+        {formatTimeRangeInZone(shift.starts_at, shift.ends_at, zone)}
       </div>
       {shift.location && (
         <div className="truncate text-base-content/50" title={shift.location}>

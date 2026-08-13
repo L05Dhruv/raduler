@@ -4,6 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { TimeZoneMenu } from "@/components/TimeZoneMenu";
+import { SessionZoneNotice, TravelBanner } from "@/components/TravelBanner";
 import {
   Activity,
   BarChart3,
@@ -98,6 +100,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           ))}
         </nav>
       </header>
+
+      <TravelBanner />
+      <SessionZoneNotice />
 
       <main className="mx-auto max-w-7xl p-4 sm:p-6">{children}</main>
 
@@ -194,6 +199,7 @@ function UserMenu({ onSignOut }: { onSignOut: () => Promise<void> }) {
             {profile.role}
           </span>
         </div>
+        <TimeZoneMenu />
         <button
           className="btn btn-ghost btn-sm mt-1 w-full justify-start gap-2 text-error"
           onClick={() => void onSignOut()}

@@ -1,5 +1,6 @@
 import { addDays, eachDayOfInterval } from "date-fns";
-import { fromDateInput } from "@/lib/format";
+import { fromDateInput, toDateInput } from "@/lib/format";
+import { wallClockToInstant } from "@/lib/timezone";
 import type { NewShift } from "@/lib/repositories/shifts";
 import type { UserRole } from "@/types/db";
 
@@ -14,52 +15,66 @@ export interface ShiftPattern {
   /** `yyyy-MM-dd`, inclusive. */
   from: string;
   to: string;
-  /** `HH:mm` local time. */
+  /** `HH:mm` in the practice's zone, not the publisher's. */
   startTime: string;
   /** Whole or fractional hours; 8.5 is a valid shift. */
   durationHours: number;
   /** 0 = Sunday … 6 = Saturday. Empty means every day in the range. */
   weekdays: number[];
+  /** The practice's IANA zone. An 08:00 shift means 08:00 here. */
+  timezone: string;
 }
 
 /**
  * Expands a recurring pattern into concrete shift rows.
  *
- * Times are built in the browser's local zone and serialised to UTC, so an overnight
- * shift lands on the correct calendar day and a run that crosses a daylight-saving
- * boundary keeps its wall-clock start time rather than drifting an hour.
+ * Start times are wall-clock times **in the practice's zone**, resolved to instants
+ * through it. That is the correction that matters: this used to build against the
+ * browser's zone, so an administrator publishing next month's roster from a conference in
+ * Vancouver would have created a set of 05:00 shifts without either of us noticing.
+ *
+ * Two consequences of resolving per day rather than adding 24-hour steps:
+ *
+ *   * A run crossing a daylight-saving boundary keeps its 08:00 start instead of drifting
+ *     an hour, because each day is resolved independently.
+ *   * `ends_at` is `starts_at` plus the elapsed duration, so an eight-hour shift is always
+ *     eight hours of work — even the one spanning a transition, where the wall clock at
+ *     the end will read an hour off. Paying for hours worked is the right behaviour; that
+ *     shift genuinely was eight hours.
  */
 export function expandPattern(pattern: ShiftPattern): NewShift[] {
   const start = fromDateInput(pattern.from);
   const end = fromDateInput(pattern.to);
   if (end < start) return [];
 
-  const [hour, minute] = pattern.startTime.split(":").map(Number);
   const durationMs = Math.round(pattern.durationHours * 60) * 60_000;
 
   return eachDayOfInterval({ start, end })
     .filter(
       (day) => pattern.weekdays.length === 0 || pattern.weekdays.includes(day.getDay()),
     )
-    .map((day) => {
-      const startsAt = new Date(
-        day.getFullYear(),
-        day.getMonth(),
-        day.getDate(),
-        hour || 0,
-        minute || 0,
+    .flatMap((day) => {
+      const startsAt = wallClockToInstant(
+        toDateInput(day),
+        pattern.startTime,
+        pattern.timezone,
       );
-      return {
-        title: pattern.title,
-        location: pattern.location,
-        modality: pattern.modality,
-        team_id: pattern.team_id,
-        required_role: pattern.required_role,
-        hourly_rate_cents: pattern.hourly_rate_cents,
-        notes: pattern.notes,
-        starts_at: startsAt.toISOString(),
-        ends_at: new Date(startsAt.getTime() + durationMs).toISOString(),
-      };
+      // Only when startTime or the zone is malformed, which the form refuses first.
+      if (!startsAt) return [];
+
+      return [
+        {
+          title: pattern.title,
+          location: pattern.location,
+          modality: pattern.modality,
+          team_id: pattern.team_id,
+          required_role: pattern.required_role,
+          hourly_rate_cents: pattern.hourly_rate_cents,
+          notes: pattern.notes,
+          starts_at: startsAt.toISOString(),
+          ends_at: new Date(startsAt.getTime() + durationMs).toISOString(),
+        },
+      ];
     });
 }
 

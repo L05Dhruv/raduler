@@ -92,10 +92,16 @@ beforeAll(async () => {
     `);
   }
 
-  // A fresh install runs these two. 0002-0004 repair projects created before those
-  // defects were found; 0001 was corrected in place, so they are not replayed here.
+  // A PostgREST connection runs in UTC, and PGlite would otherwise inherit whatever the
+  // developer's machine is set to. Pinning it matters: the date-boundary defect that
+  // 0006 fixes is invisible on a machine that happens to sit in the practice's zone.
+  await db.exec("set time zone 'UTC'");
+
+  // A fresh install runs these. 0002-0004 repair projects created before those defects
+  // were found; 0001 was corrected in place, so they are not replayed here.
   await db.exec(migration("0001_init.sql"));
   await db.exec(migration("0005_flexible_hours.sql"));
+  await db.exec(migration("0006_timezones.sql"));
 
   // Inserting into auth.users fires the profile trigger from 0001.
   await db.exec(`
@@ -637,3 +643,158 @@ describe("row level security, as a real non-superuser", () => {
   });
 });
 
+/**
+ * 0006. The session runs in UTC above, as PostgREST's does, which is the whole point:
+ * `timestamptz::date` resolved there put an evening shift on the following day and
+ * counted it in the wrong month.
+ */
+describe("the practice zone anchors every date boundary", () => {
+  // 20:00-23:00 on 31 August in Toronto — which is 00:00-03:00 on 1 September in UTC.
+  const LATE_SHIFT = "cccccccc-0000-0000-0000-000000000003";
+  const toronto = () => db.exec(`set app.practice_timezone = 'America/Toronto'`);
+  const unset = () => db.exec("reset app.practice_timezone");
+
+  const bobMinutes = async (from: string, to: string) => {
+    const r = await db.query<{ total_minutes: string }>(
+      `select total_minutes from public.hours_summary('${from}','${to}')
+       where profile_id = '${BOB}'`,
+    );
+    return r.rows.length ? Number(r.rows[0].total_minutes) : null;
+  };
+
+  it("defaults to UTC, so applying the migration alone changes no figure", async () => {
+    await unset();
+    const zone = await row<{ practice_timezone: string }>(
+      "select public.practice_timezone()",
+    );
+    expect(zone.practice_timezone).toBe("UTC");
+  });
+
+  it("reads the configured zone", async () => {
+    await toronto();
+    const zone = await row<{ practice_timezone: string }>(
+      "select public.practice_timezone()",
+    );
+    expect(zone.practice_timezone).toBe("America/Toronto");
+  });
+
+  it("counts a late-evening shift in the practice's month", async () => {
+    await toronto();
+    await db.exec(`
+      insert into public.shifts
+        (id, title, location, starts_at, ends_at, required_role, hourly_rate_cents)
+      values ('${LATE_SHIFT}', 'Late Read', 'Main',
+              '2026-08-31T20:00:00-04:00', '2026-08-31T23:00:00-04:00',
+              'radiologist', 30000)
+    `);
+    await as(BOB);
+    await db.exec(`select public.claim_shift('${LATE_SHIFT}'::uuid)`);
+
+    expect(await bobMinutes("2026-08-01", "2026-08-31")).toBe(180);
+    expect(await bobMinutes("2026-09-01", "2026-09-30")).toBeNull();
+  });
+
+  it("is the defect being fixed: under UTC the same shift moves month", async () => {
+    // Same data, same query, anchor removed. Three hours worked on 31 August land in
+    // September, and every report and invoice for both months is wrong by that much.
+    await unset();
+    expect(await bobMinutes("2026-08-01", "2026-08-31")).toBeNull();
+    expect(await bobMinutes("2026-09-01", "2026-09-30")).toBe(180);
+    await toronto();
+  });
+
+  it("dates an invoice line by the practice's calendar day", async () => {
+    await toronto();
+    await as(CAROL);
+    await db.exec(
+      `select public.create_invoice('${BOB}'::uuid, '2026-08-01', '2026-08-31')`,
+    );
+    const line = await row<{ worked_on: Date; minutes: string }>(
+      `select l.worked_on, l.minutes from public.invoice_lines l
+       where l.shift_id = '${LATE_SHIFT}'`,
+    );
+    expect(new Date(line.worked_on).toISOString().slice(0, 10)).toBe("2026-08-31");
+    expect(Number(line.minutes)).toBe(180);
+  });
+
+  it("records the zone the invoice was computed in", async () => {
+    const audit = await row<{ zone: string }>(`
+      select metadata ->> 'practice_timezone' as zone from public.audit_log
+      where action = 'invoice.create' order by id desc limit 1
+    `);
+    expect(audit.zone).toBe("America/Toronto");
+  });
+
+  it("compares approved leave against practice-zone dates when claiming", async () => {
+    await toronto();
+    // Leave covering 31 August only. The shift runs 20:00-23:00 that evening, which in
+    // UTC is 1 September — so before this fix the claim went straight through.
+    await db.exec(`
+      insert into public.time_off (profile_id, starts_on, ends_on, kind, status)
+      values ('${BOB}', '2026-08-31', '2026-08-31', 'vacation', 'approved')
+    `);
+    await db.exec(`select public.release_shift('${LATE_SHIFT}'::uuid)`);
+    await as(BOB);
+    const err = await refusal(`select public.claim_shift('${LATE_SHIFT}'::uuid)`);
+    expect(err).toMatch(/inside your approved time off/);
+
+    // Put the scenario back: the leave goes, the shift is re-claimed. Without this the
+    // block below finds Bob holding nothing and reads it as a pay change.
+    await db.exec(`delete from public.time_off where profile_id = '${BOB}'`);
+    await db.exec(`select public.claim_shift('${LATE_SHIFT}'::uuid)`);
+  });
+});
+
+describe("a person's home time zone", () => {
+  it("starts unset, meaning the practice zone", async () => {
+    const profile = await row<{ timezone: string | null }>(
+      `select timezone from public.profiles where id = '${ALICE}'`,
+    );
+    expect(profile.timezone).toBeNull();
+  });
+
+  it("can be set by the person themselves", async () => {
+    await db.exec("reset role");
+    await db.exec(`set app.test_uid = '${ALICE}'`);
+    await db.exec("set role authenticated");
+    const err = await refusal(
+      `update public.profiles set timezone = 'America/Vancouver' where id = '${ALICE}'`,
+    );
+    await db.exec("reset role");
+    expect(err).toBeNull();
+
+    const profile = await row<{ timezone: string }>(
+      `select timezone from public.profiles where id = '${ALICE}'`,
+    );
+    expect(profile.timezone).toBe("America/Vancouver");
+  });
+
+  it("refuses a zone Postgres does not recognise", async () => {
+    const err = await refusal(
+      `update public.profiles set timezone = 'Mars/Olympus_Mons' where id = '${ALICE}'`,
+    );
+    expect(err).toMatch(/Unknown time zone/);
+  });
+
+  it("still cannot be used as a way into the pay columns", async () => {
+    await db.exec("reset role");
+    await db.exec(`set app.test_uid = '${ALICE}'`);
+    await db.exec("set role authenticated");
+    const err = await refusal(`
+      update public.profiles set timezone = 'America/Toronto', hourly_rate_cents = 999999
+      where id = '${ALICE}'
+    `);
+    await db.exec("reset role");
+    expect(err).toMatch(/permission denied/);
+  });
+
+  it("changes nothing about what anyone is paid", async () => {
+    // The home zone is presentation. hours_summary reads the practice zone only.
+    await db.exec(`set app.practice_timezone = 'America/Toronto'`);
+    const withVancouverHome = await row<{ total_minutes: string }>(
+      `select total_minutes from public.hours_summary('2026-08-01','2026-08-31')
+       where profile_id = '${BOB}'`,
+    );
+    expect(Number(withVancouverHome.total_minutes)).toBe(180);
+  });
+});

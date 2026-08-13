@@ -19,6 +19,11 @@ export interface Profile {
   role: UserRole;
   modality: string | null;
   hourly_rate_cents: number;
+  /**
+   * IANA zone the person prefers to read times in. Null means "follow the practice".
+   * Presentation only — nothing in the hours or money path reads it.
+   */
+  timezone: string | null;
   active: boolean;
   created_at: string;
   updated_at: string;

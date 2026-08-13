@@ -35,14 +35,16 @@ export function formatCents(cents: number): string {
   return currency.format((cents ?? 0) / 100);
 }
 
-const timeFormat = new Intl.DateTimeFormat("en-CA", {
-  hour: "numeric",
-  minute: "2-digit",
-});
-
-export function formatTimeRange(startIso: string, endIso: string): string {
-  return `${timeFormat.format(new Date(startIso))}–${timeFormat.format(new Date(endIso))}`;
-}
+/**
+ * There is deliberately no zone-free time formatter here.
+ *
+ * One used to live in this file and rendered in whatever zone the browser happened to be
+ * in, which is exactly the assumption `src/lib/timezone.ts` exists to remove. Use
+ * `formatTimeInZone` / `formatTimeRangeInZone` and name the zone — the display zone for
+ * anything a person reads, the practice zone for anything canonical.
+ *
+ * Durations below need no zone: elapsed time is elapsed time.
+ */
 
 /** `yyyy-MM-dd` in local time — the format Postgres `date` columns expect. */
 export function toDateInput(date: Date): string {

@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { TimeZoneProvider } from "@/contexts/TimeZoneContext";
 import { ToastProvider } from "@/components/ui/Toast";
 import { CSP_CONTENT, CSP_ENABLED } from "@/lib/security/csp";
 import { THEME_INIT_SCRIPT } from "@/lib/theme";
@@ -44,8 +45,12 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
       <body className={`${inter.variable} font-sans antialiased`}>
+        {/* TimeZoneProvider sits inside AuthProvider: the home zone comes off the
+            profile, and the practice zone from an RPC only signed-in users may call. */}
         <AuthProvider>
-          <ToastProvider>{children}</ToastProvider>
+          <TimeZoneProvider>
+            <ToastProvider>{children}</ToastProvider>
+          </TimeZoneProvider>
         </AuthProvider>
       </body>
     </html>

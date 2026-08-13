@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { expandPattern, type ShiftPattern } from "@/lib/shiftPattern";
 import { summaryToCsv } from "@/lib/repositories/reports";
+import { dayKeyInZone, timeKeyInZone } from "@/lib/timezone";
 import type { HoursSummaryRow } from "@/types/db";
+
+/**
+ * Assertions are made in the practice's zone rather than the machine's, so these pass
+ * identically on a laptop in Toronto, one in Vancouver and CI in UTC. The old versions of
+ * these tests read `getHours()`, which quietly asserted the runner's zone.
+ */
+const TORONTO = "America/Toronto";
 
 function pattern(overrides: Partial<ShiftPattern> = {}): ShiftPattern {
   return {
@@ -17,6 +25,7 @@ function pattern(overrides: Partial<ShiftPattern> = {}): ShiftPattern {
     startTime: "08:00",
     durationHours: 8,
     weekdays: [1, 2, 3, 4, 5],
+    timezone: TORONTO,
     ...overrides,
   };
 }
@@ -31,9 +40,9 @@ describe("expandPattern", () => {
     expect(expandPattern(pattern({ weekdays: [] }))).toHaveLength(7);
   });
 
-  it("keeps the wall-clock start time on each day", () => {
+  it("keeps the practice's wall-clock start time on each day", () => {
     for (const shift of expandPattern(pattern())) {
-      expect(new Date(shift.starts_at).getHours()).toBe(8);
+      expect(timeKeyInZone(new Date(shift.starts_at), TORONTO)).toBe("08:00");
     }
   });
 
@@ -41,11 +50,11 @@ describe("expandPattern", () => {
     const [shift] = expandPattern(
       pattern({ from: "2026-03-02", to: "2026-03-02", startTime: "23:00", weekdays: [] }),
     );
-    const start = new Date(shift.starts_at);
-    const end = new Date(shift.ends_at);
-    expect(start.getDate()).toBe(2);
-    expect(end.getDate()).toBe(3);
-    expect(end.getTime() - start.getTime()).toBe(8 * 60 * 60 * 1000);
+    expect(dayKeyInZone(new Date(shift.starts_at), TORONTO)).toBe("2026-03-02");
+    expect(dayKeyInZone(new Date(shift.ends_at), TORONTO)).toBe("2026-03-03");
+    expect(
+      new Date(shift.ends_at).getTime() - new Date(shift.starts_at).getTime(),
+    ).toBe(8 * 60 * 60 * 1000);
   });
 
   it("supports a fractional duration", () => {
@@ -61,13 +70,53 @@ describe("expandPattern", () => {
     expect(expandPattern(pattern({ from: "2026-03-08", to: "2026-03-02" }))).toEqual([]);
   });
 
-  it("holds the local start hour across a daylight-saving change", () => {
-    // North American DST begins on 8 March 2026; a naive UTC offset would shift
-    // every shift after it by an hour.
+  it("holds the start hour across a daylight-saving change", () => {
+    // Toronto's clocks go forward on 8 March 2026. Stepping in 24-hour increments would
+    // move every shift after it by an hour.
     const shifts = expandPattern(
       pattern({ from: "2026-03-06", to: "2026-03-10", weekdays: [] }),
     );
-    expect(shifts.map((s) => new Date(s.starts_at).getHours())).toEqual([8, 8, 8, 8, 8]);
+    expect(shifts.map((s) => timeKeyInZone(new Date(s.starts_at), TORONTO))).toEqual([
+      "08:00",
+      "08:00",
+      "08:00",
+      "08:00",
+      "08:00",
+    ]);
+  });
+
+  it("keeps the elapsed duration honest over the transition", () => {
+    // The 8 March shift starts 08:00 EST and ends 16:00 EDT — the wall clock reads eight
+    // hours but so does the clock on the wall of the reading room. Eight hours were
+    // worked, and eight hours are what gets paid.
+    const [shift] = expandPattern(
+      pattern({ from: "2026-03-08", to: "2026-03-08", weekdays: [] }),
+    );
+    expect(
+      new Date(shift.ends_at).getTime() - new Date(shift.starts_at).getTime(),
+    ).toBe(8 * 60 * 60 * 1000);
+  });
+
+  it("publishes the same instants whatever zone the administrator is in", () => {
+    // The correction this rework exists for. The pattern names the practice's zone, so an
+    // admin publishing from a conference elsewhere produces an identical roster rather
+    // than a set of shifts three hours out.
+    const asPublished = expandPattern(pattern({ from: "2026-06-01", to: "2026-06-01", weekdays: [] }));
+    expect(asPublished[0].starts_at).toBe("2026-06-01T12:00:00.000Z"); // 08:00 EDT
+  });
+
+  it("resolves a start time that does not exist on the day", () => {
+    // 02:30 is skipped on 8 March. Rather than dropping the shift or inventing an hour,
+    // it moves forward past the gap.
+    const [shift] = expandPattern(
+      pattern({
+        from: "2026-03-08",
+        to: "2026-03-08",
+        startTime: "02:30",
+        weekdays: [],
+      }),
+    );
+    expect(shift.starts_at).toBe("2026-03-08T07:30:00.000Z"); // 03:30 EDT
   });
 });
 

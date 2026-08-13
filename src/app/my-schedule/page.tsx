@@ -12,6 +12,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/contexts/AuthContext";
+import { useTimeZone } from "@/contexts/TimeZoneContext";
 import {
   listMyShifts,
   releaseShift,
@@ -19,11 +20,15 @@ import {
   setShiftHoursBulk,
 } from "@/lib/repositories/shifts";
 import { getHoursSummary } from "@/lib/repositories/reports";
-import { resolveHours, toTimeInput, type HourWindow } from "@/lib/shiftHours";
+import { resolveHours, type HourWindow } from "@/lib/shiftHours";
+import {
+  formatTimeRangeInZone,
+  timeKeyInZone,
+  zoneAbbreviation,
+} from "@/lib/timezone";
 import {
   formatCents,
   formatMinutes,
-  formatTimeRange,
   minutesBetween,
   toDateInput,
 } from "@/lib/format";
@@ -51,6 +56,7 @@ interface AssignmentRow {
 
 function MySchedule() {
   const { profile } = useAuth();
+  const { displayZone, practiceZone, viewingElsewhere } = useTimeZone();
   const { run, toast } = useToast();
   const [month, setMonth] = useState(() => new Date());
   const [editing, setEditing] = useState<AssignmentRow | null>(null);
@@ -92,18 +98,18 @@ function MySchedule() {
     const chosen = rows.find((r) => r.actual_start && r.actual_end);
     if (chosen) {
       return {
-        start: toTimeInput(new Date(chosen.actual_start!)),
-        end: toTimeInput(new Date(chosen.actual_end!)),
+        start: timeKeyInZone(new Date(chosen.actual_start!), displayZone),
+        end: timeKeyInZone(new Date(chosen.actual_end!), displayZone),
       };
     }
     if (rows[0]) {
       return {
-        start: toTimeInput(new Date(rows[0].shifts.starts_at)),
-        end: toTimeInput(new Date(rows[0].shifts.ends_at)),
+        start: timeKeyInZone(new Date(rows[0].shifts.starts_at), displayZone),
+        end: timeKeyInZone(new Date(rows[0].shifts.ends_at), displayZone),
       };
     }
     return { start: "08:00", end: "16:00" };
-  }, [rows]);
+  }, [rows, displayZone]);
 
   /** Both the roster and the hours total move whenever an assignment changes. */
   const refresh = () => Promise.all([shiftsQuery.mutate(), summaryQuery.mutate()]);
@@ -122,11 +128,13 @@ function MySchedule() {
    * after it has closed. Successes toast and close, as everywhere else.
    */
   const saveHours = async (row: AssignmentRow, startTime: string, endTime: string) => {
+    // Resolved in the zone the person is reading, which is what they typed against.
     const resolved = resolveHours(
       row.shifts.starts_at,
       row.shifts.ends_at,
       startTime,
       endTime,
+      displayZone,
     );
     if (!resolved.ok) return resolved.reason;
 
@@ -138,10 +146,11 @@ function MySchedule() {
     await refresh();
     toast(
       "success",
-      `${row.shifts.title} set to ${formatTimeRange(
+      `${row.shifts.title} set to ${formatTimeRangeInZone(
         resolved.window.start.toISOString(),
         resolved.window.end.toISOString(),
-      )}.`,
+        displayZone,
+      )} ${zoneAbbreviation(displayZone)}.`,
     );
     return null;
   };
@@ -172,6 +181,7 @@ function MySchedule() {
         row.shifts.ends_at,
         startTime,
         endTime,
+        displayZone,
       );
       if (resolved.ok) entries.push({ shiftId: row.shift_id, window: resolved.window });
       else unfitted += 1;
@@ -234,12 +244,26 @@ function MySchedule() {
           </button>
         </div>
 
-        {rows.length > 0 && (
+        <div className="flex items-center gap-2">
+          <span
+            className={`rounded-field px-2 py-1 text-xs ${
+              viewingElsewhere ? "bg-warning/15 text-warning" : "text-base-content/55"
+            }`}
+            title={
+              viewingElsewhere && practiceZone
+                ? `Times shown in ${displayZone}. The practice publishes in ${practiceZone}.`
+                : `Times shown in ${displayZone}`
+            }
+          >
+            times in {zoneAbbreviation(displayZone)}
+          </span>
+          {rows.length > 0 && (
           <button className="btn btn-sm lift gap-1.5" onClick={() => setBulkOpen(true)}>
             <Clock className="h-3.5 w-3.5" aria-hidden="true" />
             Set my usual hours
           </button>
-        )}
+          )}
+        </div>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -295,9 +319,10 @@ function MySchedule() {
                         {adjusted && (
                           <span
                             className="badge badge-ghost badge-xs ml-2"
-                            title={`Published ${formatTimeRange(
+                            title={`Published ${formatTimeRangeInZone(
                               row.shifts.starts_at,
                               row.shifts.ends_at,
+                              displayZone,
                             )}`}
                           >
                             adjusted
@@ -305,7 +330,7 @@ function MySchedule() {
                         )}
                       </td>
                       <td className="whitespace-nowrap tabular-nums text-base-content/70">
-                        {formatTimeRange(start, end)}
+                        {formatTimeRangeInZone(start, end, displayZone)}
                       </td>
                       <td className="text-base-content/60">
                         {row.shifts.location || "—"}
@@ -344,15 +369,39 @@ function MySchedule() {
             <>
               {editing.shifts.title} is published{" "}
               <span className="tabular-nums text-base-content">
-                {formatTimeRange(editing.shifts.starts_at, editing.shifts.ends_at)}
+                {formatTimeRangeInZone(
+                  editing.shifts.starts_at,
+                  editing.shifts.ends_at,
+                  displayZone,
+                )}{" "}
+              {zoneAbbreviation(displayZone)}
               </span>
               . Choose the hours you are actually working — anything inside that window.
+              {viewingElsewhere && practiceZone && (
+                <>
+                  {" "}
+                  That is{" "}
+                  <span className="tabular-nums text-base-content">
+                    {formatTimeRangeInZone(
+                      editing.shifts.starts_at,
+                      editing.shifts.ends_at,
+                      practiceZone,
+                    )}
+                  </span>{" "}
+                  {zoneAbbreviation(practiceZone)} at the practice, and your times are
+                  read as {zoneAbbreviation(displayZone)}.
+                </>
+              )}
             </>
           }
-          initialStart={toTimeInput(
+          initialStart={timeKeyInZone(
             new Date(editing.actual_start ?? editing.shifts.starts_at),
+            displayZone,
           )}
-          initialEnd={toTimeInput(new Date(editing.actual_end ?? editing.shifts.ends_at))}
+          initialEnd={timeKeyInZone(
+            new Date(editing.actual_end ?? editing.shifts.ends_at),
+            displayZone,
+          )}
           submitLabel="Save hours"
           resetLabel={
             editing.actual_start || editing.actual_end ? "Published hours" : undefined

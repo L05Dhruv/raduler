@@ -30,10 +30,10 @@ the check outside RLS breaks the cycle.
 
 ### Nobody can grant themselves anything
 
-- A user holds `UPDATE` on exactly two columns of their own profile — `full_name` and
-  `modality`. Role and hourly rate are not in the grant, so raising your own pay is
-  rejected by the column privilege before RLS is even consulted. Admin changes go
-  through `admin_update_profile()`.
+- A user holds `UPDATE` on exactly three columns of their own profile — `full_name`,
+  `modality` and `timezone`, none of which decide anything. Role and hourly rate are not
+  in the grant, so raising your own pay is rejected by the column privilege before RLS is
+  even consulted. Admin changes go through `admin_update_profile()`.
 - `time_off` insert and update policies both require `status = 'requested'`, so a user
   cannot approve their own leave. Decisions go through `decide_time_off()`.
 - `shift_assignments` has no `INSERT` or `UPDATE` grant for anyone. The only ways a row
@@ -41,6 +41,10 @@ the check outside RLS breaks the cycle.
 - Hours are bounded by the published shift. A radiologist may work 1–5 of a 12–7
   posting, but not 11–8: `set_shift_hours()` refuses anything outside the window for
   anyone but an administrator. See below for why that bound is the whole control.
+- A user may set their own `timezone`, and it buys them nothing. It governs presentation
+  only — no hours or money expression reads it — and a trigger validates the name against
+  `pg_timezone_names`, so the column cannot be used to smuggle anything into a profile.
+  The reporting boundary comes from the practice's zone, never the reader's.
 
 ### Claiming a shift is atomic and checked server-side
 
@@ -85,6 +89,31 @@ It authenticates and checks ownership itself rather than trusting its callers, a
 unstaffed while it still reads `filled`. That is a scheduling problem rather than a
 security one, and the admin roster counts and labels the affected shifts rather than
 reopening them automatically — reassigning half a shift is a decision for a person.
+
+### The reporting period is not the reader's to choose
+
+Hours and money are grouped by calendar day, and a calendar day depends on a zone. Three
+zones exist here — the practice's, a person's saved preference, and whatever zone their
+device is in right now — and only the first is allowed anywhere near a total.
+
+The practice zone is a database setting read inside `hours_summary()` and
+`create_invoice()`. The browser is told what it is, but never asked: the zone someone is
+reading in is session state that never leaves the tab. A figure that moved because its
+reader boarded a plane would be indefensible, and there would be no way to tell from the
+invoice which zone had produced it.
+
+**This was a real defect, fixed in `0006_timezones.sql`.** `timestamptz::date` resolves in
+the session's time zone, and a PostgREST connection runs in UTC. A shift worked 20:00–23:00
+on 31 August in Toronto was cast to 1 September, so three hours of work were counted in the
+wrong month by the report, by the invoice, and by the approved-leave check in
+`claim_shift()` — which meant a shift could be claimed straight through the last evening of
+someone's approved leave. Every one of those casts is now anchored to the practice zone,
+and `create_invoice()` records the zone it computed in on the audit row.
+
+Two consequences worth stating plainly. Figures for a period near a month boundary will not
+match ones issued before that migration ran; that is the bug being corrected, not a new
+one. And until `app.practice_timezone` is actually set, the anchor is UTC and the behaviour
+is exactly what it was — applying the migration alone changes no number.
 
 ### Money is never client-supplied
 
@@ -269,6 +298,14 @@ await supabase.rpc('set_shift_hours', { p_shift_id: invoicedShiftId,
 await supabase.rpc('apply_shift_hours', { p_shift_id: myShiftId,
   p_start: null, p_end: null })
 
+// Readable: the practice's zone is not a secret, and the browser needs it to label times.
+await supabase.rpc('practice_timezone')
+
+// Accepted, and changes nothing about any total — presentation only.
+await supabase.from('profiles').update({ timezone: 'America/Vancouver' }).eq('id', myId)
+
+// Raises "Unknown time zone": validated against pg_timezone_names by a trigger.
+await supabase.from('profiles').update({ timezone: 'Mars/Olympus_Mons' }).eq('id', myId)
 ```
 
 And the race: call `claim_shift` for the same shift from two browsers at once. Exactly
