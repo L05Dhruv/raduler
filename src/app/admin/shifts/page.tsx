@@ -28,7 +28,7 @@ import {
 import { useTimeZone } from "@/contexts/TimeZoneContext";
 import { coverageGapMinutes } from "@/lib/shiftHours";
 import { formatTimeRangeInZone, zoneAbbreviation } from "@/lib/timezone";
-import { formatCents, formatMinutes, toDateInput } from "@/lib/format";
+import { formatMinutes, toDateInput } from "@/lib/format";
 import { USER_ROLES } from "@/types/db";
 
 export default function AdminShiftsPage() {
@@ -51,7 +51,6 @@ const schema = z.object({
   modality: z.string().max(60),
   team_id: z.string(),
   required_role: z.enum(["radiologist", "tech", "assistant", "admin"]),
-  rate: z.coerce.number().min(0, "Rate cannot be negative").max(10_000),
   notes: z.string().max(280, "Keep notes under 280 characters"),
   from: z.string().min(1),
   to: z.string().min(1),
@@ -101,7 +100,6 @@ function AdminShifts() {
       modality: "",
       team_id: "",
       required_role: "radiologist",
-      rate: 260,
       notes: "",
       from: today,
       to: toDateInput(addDays(new Date(), 13)),
@@ -122,7 +120,6 @@ function AdminShifts() {
       modality: v.modality ? v.modality : null,
       team_id: v.team_id || null,
       required_role: v.required_role ?? "radiologist",
-      hourly_rate_cents: Math.round(Number(v.rate ?? 0) * 100),
       notes: v.notes ?? "",
       from: v.from,
       to: v.to,
@@ -140,7 +137,6 @@ function AdminShifts() {
       modality: values.modality || null,
       team_id: values.team_id || null,
       required_role: values.required_role,
-      hourly_rate_cents: Math.round(Number(values.rate) * 100),
       notes: values.notes,
       from: values.from,
       to: values.to,
@@ -209,7 +205,8 @@ function AdminShifts() {
           <p className="text-sm text-base-content/70">
             Create one shift or a repeating pattern. Everything published here is open
             for the matching role to claim. Times are the practice&rsquo;s own
-            ({rosterZone}), whatever zone you happen to be in.
+            ({rosterZone}), whatever zone you happen to be in. Each person is paid
+            their own rate, set under Teams.
           </p>
 
           <form onSubmit={handleSubmit(onSubmit)} className="mt-3 space-y-3" noValidate>
@@ -263,24 +260,14 @@ function AdminShifts() {
               </Field>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
-              <Field label="Rate ($/hour)" error={errors.rate?.message}>
-                <input
-                  type="number"
-                  step="0.01"
-                  className="input input-bordered w-full"
-                  {...register("rate")}
-                />
-              </Field>
-              <Field label="Duration (hours)" error={errors.durationHours?.message}>
-                <input
-                  type="number"
-                  step="0.5"
-                  className="input input-bordered w-full"
-                  {...register("durationHours")}
-                />
-              </Field>
-            </div>
+            <Field label="Duration (hours)" error={errors.durationHours?.message}>
+              <input
+                type="number"
+                step="0.5"
+                className="input input-bordered w-full"
+                {...register("durationHours")}
+              />
+            </Field>
 
             <div className="grid grid-cols-3 gap-2">
               <Field label="From">
@@ -408,7 +395,6 @@ function AdminShifts() {
                 <th>Shift</th>
                 <th>Time</th>
                 <th>Role</th>
-                <th>Rate</th>
                 <th>Status</th>
                 <th />
               </tr>
@@ -416,14 +402,14 @@ function AdminShifts() {
             <tbody>
               {shiftsQuery.isLoading && (
                 <tr>
-                  <td colSpan={7} className="p-0">
-                    <SkeletonRows rows={6} cols={6} />
+                  <td colSpan={6} className="p-0">
+                    <SkeletonRows rows={6} cols={5} />
                   </td>
                 </tr>
               )}
               {!shiftsQuery.isLoading && shifts.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="p-0">
+                  <td colSpan={6} className="p-0">
                     <EmptyState
                       icon={Activity}
                       title="Nothing published this month"
@@ -453,11 +439,6 @@ function AdminShifts() {
                       {formatTimeRangeInZone(shift.starts_at, shift.ends_at, rosterZone)}
                     </td>
                     <td>{shift.required_role}</td>
-                    <td className="whitespace-nowrap">
-                      {shift.hourly_rate_cents == null
-                        ? "person's rate"
-                        : `${formatCents(shift.hourly_rate_cents)}/h`}
-                    </td>
                     <td className="whitespace-nowrap">
                       <span
                         className={`badge badge-sm ${claimed ? "badge-success" : "badge-ghost"}`}

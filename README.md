@@ -48,7 +48,8 @@ the SQL editor run, in order:
 1. `supabase/migrations/0001_init.sql` — tables, grants, RLS policies, RPCs, audit log
 2. `supabase/migrations/0005_flexible_hours.sql` — per-day hours within a published shift
 3. `supabase/migrations/0006_timezones.sql` — time zones, and the reporting-period anchor
-4. `supabase/seed.sql` — four teams and eight weeks of open shifts (optional)
+4. `supabase/migrations/0007_person_rates.sql` — one rate per person; drops the shift rate
+5. `supabase/seed.sql` — four teams and eight weeks of open shifts (optional)
 
 (`0002`–`0004` fix privileges on projects created before those defects were found. `0001`
 was corrected in place, so a fresh install skips them — see the header of each file.)
@@ -125,6 +126,7 @@ src/
 ├─ app/                      routes; every data-touching page is a client component
 │  ├─ calendar/              month grid, claim and release
 │  ├─ my-schedule/           claimed shifts, chosen hours and running hours
+│  ├─ profile/               own details, time zone, and the rate assigned to you
 │  ├─ time-off/              request and withdraw blackout dates
 │  └─ admin/                 shifts · time-off queue · teams · reports · invoices
 ├─ components/               AppShell, auth guards, travel banner, zone picker
@@ -166,6 +168,16 @@ means the SQL is right, not that the round trip is.
 amounts from the same expression, so a report and an invoice for the same period cannot
 disagree, and no total is ever supplied by the client. `src/lib/format.ts` only renders
 numbers the database has already decided on.
+
+**One rate per person, not per shift.** Pay comes from `profiles.hourly_rate_cents` and
+nowhere else. An administrator sets it under Teams; the person sees it, read-only, on their
+own profile page, which is honest rather than decorative — they hold `UPDATE` on
+`full_name`, `modality` and `timezone` and on nothing else, so there is no hidden path to
+editing it. Shifts carried their own rate until `0007` dropped the column, and the
+consequence is worth knowing: there is no longer any way to pay more for overnight call
+than for a day read. A differential now belongs on the person or the role, not the posting.
+Invoices already issued are unaffected — `invoice_lines.rate_cents` is a snapshot taken
+when the invoice was raised, which is why it is stored rather than recomputed.
 
 **One person per shift is a database constraint**, not a check in the UI: a partial
 unique index on confirmed assignments. Two people clicking "claim" in the same

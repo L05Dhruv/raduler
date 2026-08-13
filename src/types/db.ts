@@ -18,6 +18,7 @@ export interface Profile {
   full_name: string;
   role: UserRole;
   modality: string | null;
+  /** The one rate that applies to this person. Admin-set, via admin_update_profile(). */
   hourly_rate_cents: number;
   /**
    * IANA zone the person prefers to read times in. Null means "follow the practice".
@@ -52,7 +53,6 @@ export interface Shift {
   starts_at: string;
   ends_at: string;
   required_role: UserRole;
-  hourly_rate_cents: number | null;
   notes: string;
   status: ShiftStatus;
   created_by: string | null;

@@ -19,6 +19,7 @@ A signed-in user's JWT decides what they can see:
 | --- | --- | --- |
 | `profiles` | own row | all rows |
 | `shifts` | read all | full control |
+| own rate | read own, never write | set anyone's, via `admin_update_profile()` |
 | `shift_assignments` | read own, set own hours | read all, set anyone's hours |
 | `time_off` | full control of own, while still pending | read all, approve or deny |
 | `invoices` | read own | full control |
@@ -89,6 +90,23 @@ It authenticates and checks ownership itself rather than trusting its callers, a
 unstaffed while it still reads `filled`. That is a scheduling problem rather than a
 security one, and the admin roster counts and labels the affected shifts rather than
 reopening them automatically — reassigning half a shift is a decision for a person.
+
+### A person can see their rate and cannot touch it
+
+Pay is one number per person, on `profiles.hourly_rate_cents`, and the profile page shows
+it. That is a deliberate exposure rather than an oversight: someone is entitled to know
+what they are paid, `profiles_select_self` already let them read their own row, and hiding
+it in the UI would have protected nothing while implying it did.
+
+Writing it is a different matter, and the boundary is a column privilege rather than a
+check in the page. `authenticated` holds `UPDATE` on `full_name`, `modality` and `timezone`
+only, so an attempt on `hourly_rate_cents` is refused by Postgres before RLS is consulted —
+the same refusal whether it comes from the profile form, the console, or a crafted request.
+Changes go through `admin_update_profile()`, which re-checks the caller and is audited.
+
+`0007` removed `shifts.hourly_rate_cents`, so a shift can no longer override the rate of
+whoever holds it. One fewer place for a money value to live, and one fewer question about
+which of two rates applied.
 
 ### The reporting period is not the reader's to choose
 

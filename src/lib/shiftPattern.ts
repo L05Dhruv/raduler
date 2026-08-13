@@ -10,7 +10,6 @@ export interface ShiftPattern {
   modality: string | null;
   team_id: string | null;
   required_role: UserRole;
-  hourly_rate_cents: number | null;
   notes: string;
   /** `yyyy-MM-dd`, inclusive. */
   from: string;
@@ -69,7 +68,6 @@ export function expandPattern(pattern: ShiftPattern): NewShift[] {
           modality: pattern.modality,
           team_id: pattern.team_id,
           required_role: pattern.required_role,
-          hourly_rate_cents: pattern.hourly_rate_cents,
           notes: pattern.notes,
           starts_at: startsAt.toISOString(),
           ends_at: new Date(startsAt.getTime() + durationMs).toISOString(),

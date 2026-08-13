@@ -116,7 +116,6 @@ export interface NewShift {
   modality: string | null;
   team_id: string | null;
   required_role: UserRole;
-  hourly_rate_cents: number | null;
   notes: string;
   starts_at: string;
   ends_at: string;

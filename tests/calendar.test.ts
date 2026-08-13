@@ -22,7 +22,6 @@ function shift(partial: Partial<ShiftWithAssignment>): ShiftWithAssignment {
     starts_at: "2026-03-02T08:00:00.000Z",
     ends_at: "2026-03-02T16:00:00.000Z",
     required_role: "radiologist",
-    hourly_rate_cents: null,
     notes: "",
     status: "open",
     created_by: null,

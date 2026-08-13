@@ -31,7 +31,7 @@ export function TimeZoneMenu() {
   const zones = useMemo(() => {
     const all = supportedTimezones();
     const preferred = [practiceZone, deviceZone].filter(
-      (z): z is string => Boolean(z) && all.includes(z!),
+      (z): z is string => z !== null && all.includes(z),
     );
     const rest = all
       .filter((z) => !preferred.includes(z))

@@ -31,6 +31,8 @@ const CAROL = "33333333-3333-3333-3333-333333333333"; // administrator
 
 const SHIFT_A = "aaaaaaaa-0000-0000-0000-000000000001"; // 12:00-19:00, the 12-7 posting
 const SHIFT_B = "bbbbbbbb-0000-0000-0000-000000000002"; // 20:00-00:00, adjacent to A
+// 20:00-23:00 on 31 August in Toronto — which is 00:00-03:00 on 1 September in UTC.
+const LATE_SHIFT = "cccccccc-0000-0000-0000-000000000003";
 
 let db: PGlite;
 
@@ -102,6 +104,7 @@ beforeAll(async () => {
   await db.exec(migration("0001_init.sql"));
   await db.exec(migration("0005_flexible_hours.sql"));
   await db.exec(migration("0006_timezones.sql"));
+  await db.exec(migration("0007_person_rates.sql"));
 
   // Inserting into auth.users fires the profile trigger from 0001.
   await db.exec(`
@@ -118,12 +121,12 @@ beforeAll(async () => {
       where id = '${CAROL}';
 
     insert into public.shifts
-      (id, title, location, starts_at, ends_at, required_role, hourly_rate_cents)
+      (id, title, location, starts_at, ends_at, required_role)
     values
       ('${SHIFT_A}', 'Day Read', 'Main', '2026-09-01T12:00:00Z',
-       '2026-09-01T19:00:00Z', 'radiologist', 30000),
+       '2026-09-01T19:00:00Z', 'radiologist'),
       ('${SHIFT_B}', 'Evening',  'Main', '2026-09-01T20:00:00Z',
-       '2026-09-02T00:00:00Z', 'radiologist', 30000);
+       '2026-09-02T00:00:00Z', 'radiologist');
   `);
 }, 120_000);
 
@@ -174,9 +177,10 @@ describe("claiming, then narrowing hours inside the window", () => {
       `select total_minutes, total_cents from public.hours_summary('2026-09-01', '2026-09-30')
        where profile_id = '${ALICE}'`,
     );
-    // Four hours of the published seven, at $300/h.
+    // Four hours of the published seven, at Alice's own $260/h — the rate now comes
+    // from her profile, since shifts no longer carry one.
     expect(Number(summary.total_minutes)).toBe(240);
-    expect(Number(summary.total_cents)).toBe(120000);
+    expect(Number(summary.total_cents)).toBe(104000);
   });
 });
 
@@ -318,11 +322,13 @@ describe("an invoiced period freezes", () => {
     );
     invoiceNumber = invoice.number;
 
-    const line = await row<{ minutes: string; amount_cents: string }>(
-      `select minutes, amount_cents from public.invoice_lines where shift_id = '${SHIFT_A}'`,
+    const line = await row<{ minutes: string; rate_cents: string; amount_cents: string }>(
+      `select minutes, rate_cents, amount_cents from public.invoice_lines
+       where shift_id = '${SHIFT_A}'`,
     );
     expect(Number(line.minutes)).toBe(240);
-    expect(Number(line.amount_cents)).toBe(120000);
+    expect(Number(line.rate_cents)).toBe(26000);
+    expect(Number(line.amount_cents)).toBe(104000);
   });
 
   it("stops the holder moving hours that are already on an invoice", async () => {
@@ -649,8 +655,6 @@ describe("row level security, as a real non-superuser", () => {
  * counted it in the wrong month.
  */
 describe("the practice zone anchors every date boundary", () => {
-  // 20:00-23:00 on 31 August in Toronto — which is 00:00-03:00 on 1 September in UTC.
-  const LATE_SHIFT = "cccccccc-0000-0000-0000-000000000003";
   const toronto = () => db.exec(`set app.practice_timezone = 'America/Toronto'`);
   const unset = () => db.exec("reset app.practice_timezone");
 
@@ -682,10 +686,10 @@ describe("the practice zone anchors every date boundary", () => {
     await toronto();
     await db.exec(`
       insert into public.shifts
-        (id, title, location, starts_at, ends_at, required_role, hourly_rate_cents)
+        (id, title, location, starts_at, ends_at, required_role)
       values ('${LATE_SHIFT}', 'Late Read', 'Main',
               '2026-08-31T20:00:00-04:00', '2026-08-31T23:00:00-04:00',
-              'radiologist', 30000)
+              'radiologist')
     `);
     await as(BOB);
     await db.exec(`select public.claim_shift('${LATE_SHIFT}'::uuid)`);
@@ -796,5 +800,78 @@ describe("a person's home time zone", () => {
        where profile_id = '${BOB}'`,
     );
     expect(Number(withVancouverHome.total_minutes)).toBe(180);
+  });
+});
+
+/**
+ * 0007. Pay is a property of the person, not the posting. The shift column is gone, so
+ * there is exactly one rate per person and one place it is set.
+ */
+describe("one rate per person", () => {
+  it("has no rate column on shifts at all", async () => {
+    const gone = await row<{ rate_column_gone: boolean }>(`
+      select not exists (
+        select 1 from information_schema.columns
+        where table_schema = 'public' and table_name = 'shifts'
+          and column_name = 'hourly_rate_cents'
+      ) as rate_column_gone
+    `);
+    expect(gone.rate_column_gone).toBe(true);
+  });
+
+  it("pays the holder their profile rate", async () => {
+    // Bob holds three hours in August at his $260.
+    const before = await row<{ total_cents: string }>(
+      `select total_cents from public.hours_summary('2026-08-01','2026-08-31')
+       where profile_id = '${BOB}'`,
+    );
+    expect(Number(before.total_cents)).toBe(78000);
+  });
+
+  it("follows a rate change on the profile", async () => {
+    await as(CAROL);
+    await db.exec(
+      `select public.admin_update_profile('${BOB}'::uuid, 'radiologist', 30000, true)`,
+    );
+    const after = await row<{ total_cents: string }>(
+      `select total_cents from public.hours_summary('2026-08-01','2026-08-31')
+       where profile_id = '${BOB}'`,
+    );
+    expect(Number(after.total_cents)).toBe(90000);
+  });
+
+  it("leaves an already-issued invoice alone when the rate moves", async () => {
+    // The reason invoice_lines stores rate_cents rather than recomputing it: Bob's August
+    // invoice was issued at $260 and must still say $260 after his raise, or a document
+    // already sent would quietly disagree with itself.
+    const line = await row<{ rate_cents: string; amount_cents: string }>(
+      `select rate_cents, amount_cents from public.invoice_lines
+       where shift_id = '${LATE_SHIFT}'`,
+    );
+    expect(Number(line.rate_cents)).toBe(26000);
+    expect(Number(line.amount_cents)).toBe(78000);
+  });
+
+  it("still refuses to let anyone set their own rate", async () => {
+    await db.exec("reset role");
+    await db.exec(`set app.test_uid = '${BOB}'`);
+    await db.exec("set role authenticated");
+    const err = await refusal(
+      `update public.profiles set hourly_rate_cents = 999999 where id = '${BOB}'`,
+    );
+    await db.exec("reset role");
+    expect(err).toMatch(/permission denied/);
+  });
+
+  it("lets a person read their own rate, which is what the profile page shows", async () => {
+    await db.exec("reset role");
+    await db.exec(`set app.test_uid = '${BOB}'`);
+    await db.exec("set role authenticated");
+    const own = await db.query<{ hourly_rate_cents: number }>(
+      "select hourly_rate_cents from public.profiles",
+    );
+    await db.exec("reset role");
+    expect(own.rows).toHaveLength(1);
+    expect(Number(own.rows[0].hourly_rate_cents)).toBe(30000);
   });
 });

@@ -15,6 +15,7 @@ import {
   LogOut,
   Plane,
   Timer,
+  UserRound,
   Users,
 } from "lucide-react";
 
@@ -199,6 +200,14 @@ function UserMenu({ onSignOut }: { onSignOut: () => Promise<void> }) {
             {profile.role}
           </span>
         </div>
+        <Link
+          href="/profile/"
+          transitionTypes={["nav-forward"]}
+          className="btn btn-ghost btn-sm w-full justify-start gap-2"
+        >
+          <UserRound className="h-4 w-4" aria-hidden="true" />
+          Your profile
+        </Link>
         <TimeZoneMenu />
         <button
           className="btn btn-ghost btn-sm mt-1 w-full justify-start gap-2 text-error"

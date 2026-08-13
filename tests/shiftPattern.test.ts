@@ -18,7 +18,6 @@ function pattern(overrides: Partial<ShiftPattern> = {}): ShiftPattern {
     modality: "CT",
     team_id: null,
     required_role: "radiologist",
-    hourly_rate_cents: 26000,
     notes: "",
     from: "2026-03-02",
     to: "2026-03-08",

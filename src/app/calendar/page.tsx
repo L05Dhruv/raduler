@@ -21,7 +21,7 @@ import {
   timeOffOnDay,
   type ShiftAvailability,
 } from "@/lib/calendar";
-import { formatCents, toDateInput } from "@/lib/format";
+import { toDateInput } from "@/lib/format";
 import {
   formatTimeRangeInZone,
   todayKeyInZone,
@@ -358,11 +358,6 @@ function ShiftChip({
       {shift.location && (
         <div className="truncate text-base-content/50" title={shift.location}>
           {shift.location}
-        </div>
-      )}
-      {shift.hourly_rate_cents != null && (
-        <div className="tabular-nums text-base-content/50">
-          {formatCents(shift.hourly_rate_cents)}/h
         </div>
       )}
 

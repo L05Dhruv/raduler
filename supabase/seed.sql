@@ -23,19 +23,21 @@ days as (
   select (select week_start from base) + d as day
   from generate_series(0, 55) as d
 ),
-templates (title, location, modality, required_role, start_hour, duration_hours, rate_cents, team_name, weekday_only) as (
+templates (title, location, modality, required_role, start_hour, duration_hours, team_name, weekday_only) as (
+  -- No rates here: each person is paid their own, from their profile. Seeding shifts
+  -- cannot set anyone's pay, which is the point.
   values
-    ('Day Read — Body',      'Main Campus, Reading Room 2', 'CT/MRI',        'radiologist'::public.user_role,  8, 8, 26000, 'Body Imaging',        true),
-    ('Day Read — Neuro',     'Main Campus, Reading Room 4', 'MRI',           'radiologist'::public.user_role,  8, 8, 27500, 'Neuro',               true),
-    ('Evening Read',         'Remote',                      'CT',            'radiologist'::public.user_role, 16, 8, 30000, 'Emergency Radiology', false),
-    ('Overnight Call',       'Remote',                      'CT/XR',         'radiologist'::public.user_role,  0, 8, 36000, 'Emergency Radiology', false),
-    ('Screening Clinic',     'Westside Clinic',             'Mammography',   'radiologist'::public.user_role,  9, 6, 28000, 'Breast Imaging',      true),
-    ('CT Tech — Days',       'Main Campus, CT Suite',       'CT',            'tech'::public.user_role,         7, 10, 6500, 'Body Imaging',        true),
-    ('MRI Tech — Days',      'Main Campus, MRI Suite',      'MRI',           'tech'::public.user_role,         7, 10, 6800, 'Neuro',               true),
-    ('MRI Tech — Evenings',  'Main Campus, MRI Suite',      'MRI',           'tech'::public.user_role,        17, 8,  7400, 'Neuro',               false),
-    ('Front Desk / Intake',  'Westside Clinic',             null,            'assistant'::public.user_role,    8, 8,  3200, 'Breast Imaging',      true)
+    ('Day Read — Body',      'Main Campus, Reading Room 2', 'CT/MRI',        'radiologist'::public.user_role,  8,  8, 'Body Imaging',        true),
+    ('Day Read — Neuro',     'Main Campus, Reading Room 4', 'MRI',           'radiologist'::public.user_role,  8,  8, 'Neuro',               true),
+    ('Evening Read',         'Remote',                      'CT',            'radiologist'::public.user_role, 16,  8, 'Emergency Radiology', false),
+    ('Overnight Call',       'Remote',                      'CT/XR',         'radiologist'::public.user_role,  0,  8, 'Emergency Radiology', false),
+    ('Screening Clinic',     'Westside Clinic',             'Mammography',   'radiologist'::public.user_role,  9,  6, 'Breast Imaging',      true),
+    ('CT Tech — Days',       'Main Campus, CT Suite',       'CT',            'tech'::public.user_role,         7, 10, 'Body Imaging',        true),
+    ('MRI Tech — Days',      'Main Campus, MRI Suite',      'MRI',           'tech'::public.user_role,         7, 10, 'Neuro',               true),
+    ('MRI Tech — Evenings',  'Main Campus, MRI Suite',      'MRI',           'tech'::public.user_role,        17,  8, 'Neuro',               false),
+    ('Front Desk / Intake',  'Westside Clinic',             null,            'assistant'::public.user_role,    8,  8, 'Breast Imaging',      true)
 )
-insert into public.shifts (team_id, title, location, modality, starts_at, ends_at, required_role, hourly_rate_cents, status)
+insert into public.shifts (team_id, title, location, modality, starts_at, ends_at, required_role, status)
 select
   t.id,
   tpl.title,
@@ -44,7 +46,6 @@ select
   (d.day + make_interval(hours => tpl.start_hour))::timestamptz,
   (d.day + make_interval(hours => tpl.start_hour + tpl.duration_hours))::timestamptz,
   tpl.required_role,
-  tpl.rate_cents,
   'open'
 from days d
 cross join templates tpl
