@@ -90,7 +90,7 @@ function AdminTeams() {
             <EmptyState
               icon={Users}
               title="No teams yet"
-              hint="Teams group shifts by subspecialty — Body, Neuro, Breast. Add one above."
+              hint="Teams group shifts by subspecialty — Body, Neuro, Paediatrics. Add one above."
             />
           </div>
         )}

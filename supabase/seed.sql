@@ -10,7 +10,7 @@
 insert into public.teams (name, description) values
   ('Body Imaging',        'CT and MRI abdominal/pelvic coverage'),
   ('Neuro',               'Head CT, MRI brain and spine'),
-  ('Breast Imaging',      'Mammography, ultrasound and biopsy sessions'),
+  ('Paediatrics',         'Paediatric radiography, ultrasound and fluoroscopy'),
   ('Emergency Radiology', 'Overnight and weekend acute coverage')
 on conflict (name) do nothing;
 
@@ -31,11 +31,11 @@ templates (title, location, modality, required_role, start_hour, duration_hours,
     ('Day Read — Neuro',     'Main Campus, Reading Room 4', 'MRI',           'radiologist'::public.user_role,  8,  8, 'Neuro',               true),
     ('Evening Read',         'Remote',                      'CT',            'radiologist'::public.user_role, 16,  8, 'Emergency Radiology', false),
     ('Overnight Call',       'Remote',                      'CT/XR',         'radiologist'::public.user_role,  0,  8, 'Emergency Radiology', false),
-    ('Screening Clinic',     'Westside Clinic',             'Mammography',   'radiologist'::public.user_role,  9,  6, 'Breast Imaging',      true),
+    ('Peds Clinic',          'Westside Clinic',             'XR/US',         'radiologist'::public.user_role,  9,  6, 'Paediatrics',         true),
     ('CT Tech — Days',       'Main Campus, CT Suite',       'CT',            'tech'::public.user_role,         7, 10, 'Body Imaging',        true),
     ('MRI Tech — Days',      'Main Campus, MRI Suite',      'MRI',           'tech'::public.user_role,         7, 10, 'Neuro',               true),
     ('MRI Tech — Evenings',  'Main Campus, MRI Suite',      'MRI',           'tech'::public.user_role,        17,  8, 'Neuro',               false),
-    ('Front Desk / Intake',  'Westside Clinic',             null,            'assistant'::public.user_role,    8,  8, 'Breast Imaging',      true)
+    ('Front Desk / Intake',  'Westside Clinic',             null,            'assistant'::public.user_role,    8,  8, 'Paediatrics',         true)
 )
 insert into public.shifts (team_id, title, location, modality, starts_at, ends_at, required_role, status)
 select
