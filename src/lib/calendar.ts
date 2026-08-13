@@ -74,8 +74,23 @@ export function shiftAvailability(
 ): ShiftAvailability {
   const confirmed = shift.shift_assignments?.[0];
   if (confirmed) return confirmed.profile_id === viewerId ? "mine" : "taken";
+
   if (viewerRole && viewerRole !== "admin" && shift.required_role !== viewerRole) {
     return "ineligible";
   }
+
+  /**
+   * An empty assignment array does not mean nobody holds the shift. The
+   * `assignments_select_own` policy shows a regular user only their *own* assignment
+   * rows, so a shift claimed by a colleague arrives with the embed filtered away and
+   * `status` is the only evidence left. Without this the calendar offers a Claim button
+   * on a shift `claim_shift()` will refuse with "no longer open" — and the "open to
+   * you" count is inflated by every shift the group has already covered.
+   *
+   * Checked after the role test so "My role only" keeps hiding other roles' work
+   * whether or not it has been claimed.
+   */
+  if (shift.status === "filled") return "taken";
+
   return "open";
 }

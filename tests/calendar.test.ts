@@ -146,4 +146,41 @@ describe("shiftAvailability", () => {
     expect(shiftAvailability(shift({}), "me", "radiologist")).toBe("open");
   });
 
+  /**
+   * A regular user cannot read other people's assignment rows, so the embed comes back
+   * empty for a shift a colleague holds. `status` is the only thing left to go on.
+   */
+  describe("when RLS has hidden the holder", () => {
+    const heldByAnother = shift({ status: "filled", shift_assignments: [] });
+
+    it("reads a filled shift as taken rather than offering it", () => {
+      expect(shiftAvailability(heldByAnother, "me", "radiologist")).toBe("taken");
+    });
+
+    it("still marks another role's work ineligible, so the role filter holds", () => {
+      expect(shiftAvailability(heldByAnother, "me", "tech")).toBe("ineligible");
+    });
+
+    it("leaves a genuinely open shift claimable", () => {
+      expect(
+        shiftAvailability(shift({ status: "open", shift_assignments: [] }), "me", "radiologist"),
+      ).toBe("open");
+    });
+
+    it("prefers the visible assignment when there is one", () => {
+      const mine = shift({
+        status: "filled",
+        shift_assignments: [
+          {
+            id: "a1",
+            profile_id: "me",
+            status: "confirmed",
+            actual_start: null,
+            actual_end: null,
+          },
+        ],
+      });
+      expect(shiftAvailability(mine, "me", "radiologist")).toBe("mine");
+    });
+  });
 });
