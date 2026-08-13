@@ -3,9 +3,13 @@
 import { useState } from "react";
 import useSWR from "swr";
 import { format, endOfMonth, startOfMonth, subMonths } from "date-fns";
-import { FileDown, Trash2 } from "lucide-react";
+import { FileDown, FileText, Trash2 } from "lucide-react";
 import { RequireAdmin } from "@/components/auth/RequireAdmin";
 import { AppShell } from "@/components/AppShell";
+import { PageTransition } from "@/components/PageTransition";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 import {
   createInvoice,
   deleteInvoice,
@@ -29,7 +33,9 @@ export default function AdminInvoicesPage() {
   return (
     <RequireAdmin>
       <AppShell>
-        <Invoices />
+        <PageTransition>
+          <Invoices />
+        </PageTransition>
       </AppShell>
     </RequireAdmin>
   );
@@ -49,35 +55,26 @@ function Invoices() {
   const [profileId, setProfileId] = useState("");
   const [start, setStart] = useState(() => toDateInput(startOfMonth(lastMonth)));
   const [end, setEnd] = useState(() => toDateInput(endOfMonth(lastMonth)));
-  const [error, setError] = useState<string | null>(null);
+  const { run: runToast } = useToast();
   const [busy, setBusy] = useState(false);
 
   const generate = async () => {
     if (!profileId) return;
     setBusy(true);
-    setError(null);
-    try {
-      await createInvoice(profileId, fromDateInput(start), fromDateInput(end));
-      await invoicesQuery.mutate();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not generate that invoice.");
-    } finally {
-      setBusy(false);
-    }
+    const ok = await runToast(
+      () => createInvoice(profileId, fromDateInput(start), fromDateInput(end)),
+      "Invoice generated from the confirmed shifts in that period.",
+    );
+    setBusy(false);
+    if (ok) await invoicesQuery.mutate();
   };
 
   const download = (invoice: InvoiceWithDetail) => {
     downloadBlob(`${invoice.number}.pdf`, buildInvoicePdf(invoice, ISSUER));
   };
 
-  const run = async (fn: () => Promise<unknown>) => {
-    setError(null);
-    try {
-      await fn();
-      await invoicesQuery.mutate();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "That change did not go through.");
-    }
+  const run = async (fn: () => Promise<unknown>, success?: string) => {
+    if (await runToast(fn, success)) await invoicesQuery.mutate();
   };
 
   const invoices = invoicesQuery.data ?? [];
@@ -93,8 +90,8 @@ function Invoices() {
         </p>
       </div>
 
-      <div className="card bg-base-100 shadow-sm">
-        <div className="card-body flex-row flex-wrap items-end gap-3">
+      <div className="surface">
+        <div className="flex flex-row flex-wrap items-end gap-3 p-5">
           <label className="form-control">
             <span className="label-text mb-1 block text-xs">Person</span>
             <select
@@ -129,7 +126,7 @@ function Invoices() {
             />
           </label>
           <button
-            className="btn btn-primary btn-sm"
+            className="btn btn-primary btn-sm lift"
             disabled={!profileId || busy}
             onClick={() => void generate()}
           >
@@ -138,16 +135,10 @@ function Invoices() {
         </div>
       </div>
 
-      {error && (
-        <div role="alert" className="alert alert-error">
-          <span className="text-sm">{error}</span>
-        </div>
-      )}
-
-      <div className="overflow-x-auto rounded-box bg-base-100 shadow-sm">
+      <div className="surface overflow-x-auto">
         <table className="table">
           <thead>
-            <tr>
+            <tr className="border-base-300/60">
               <th>Number</th>
               <th>Person</th>
               <th>Period</th>
@@ -160,20 +151,24 @@ function Invoices() {
           <tbody>
             {invoicesQuery.isLoading && (
               <tr>
-                <td colSpan={7} className="py-8 text-center">
-                  <span className="loading loading-spinner" aria-label="Loading" />
+                <td colSpan={7} className="p-0">
+                  <SkeletonRows rows={4} cols={6} />
                 </td>
               </tr>
             )}
             {!invoicesQuery.isLoading && invoices.length === 0 && (
               <tr>
-                <td colSpan={7} className="py-8 text-center text-base-content/60">
-                  No invoices yet.
+                <td colSpan={7} className="p-0">
+                  <EmptyState
+                    icon={FileText}
+                    title="No invoices yet"
+                    hint="Choose a person and a period above. The database totals their confirmed shifts and writes the line items."
+                  />
                 </td>
               </tr>
             )}
             {invoices.map((invoice) => (
-              <tr key={invoice.id}>
+              <tr key={invoice.id} className="border-base-300/40 transition-colors hover:bg-base-300/25">
                 <td className="font-mono text-xs">{invoice.number}</td>
                 <td>{invoice.profiles?.full_name || invoice.profiles?.email || "—"}</td>
                 <td className="whitespace-nowrap text-base-content/70">
@@ -190,6 +185,7 @@ function Invoices() {
                     onChange={(e) =>
                       void run(() =>
                         setInvoiceStatus(invoice.id, e.target.value as InvoiceStatus),
+                        `${invoice.number} marked ${e.target.value}.`,
                       )
                     }
                   >
@@ -210,7 +206,7 @@ function Invoices() {
                     <button
                       className="btn btn-ghost btn-xs"
                       aria-label={`Delete ${invoice.number}`}
-                      onClick={() => void run(() => deleteInvoice(invoice.id))}
+                      onClick={() => void run(() => deleteInvoice(invoice.id), `Deleted ${invoice.number}.`)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>

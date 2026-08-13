@@ -1,38 +1,380 @@
 @import "tailwindcss";
+
 @plugin "daisyui" {
-  themes:
-    corporate --default,
-    business --prefersdark;
+  themes: false;
 }
+
+/* ---------------------------------------------------------------------------
+   Themes
+
+   Dark is the default rather than a preference-driven alternate: radiologists
+   read in darkened rooms, and a bright UI beside a diagnostic monitor ruins dark
+   adaptation. Light is a deliberate choice, not the fallback.
+
+   base-100 is the raised surface and base-200 the page beneath it in both
+   themes, so every component keeps the same token regardless of mode.
+--------------------------------------------------------------------------- */
+
+@plugin "daisyui/theme" {
+  name: "raduler";
+  default: true;
+  color-scheme: dark;
+
+  --color-base-100: oklch(21.5% 0.012 258);
+  --color-base-200: oklch(16.5% 0.012 258);
+  --color-base-300: oklch(27% 0.015 258);
+  --color-base-content: oklch(92% 0.008 258);
+
+  --color-primary: oklch(64% 0.145 252);
+  --color-primary-content: oklch(15% 0.03 252);
+  --color-secondary: oklch(66% 0.1 220);
+  --color-secondary-content: oklch(15% 0.02 220);
+  --color-accent: oklch(72% 0.12 180);
+  --color-accent-content: oklch(15% 0.03 180);
+  --color-neutral: oklch(30% 0.012 258);
+  --color-neutral-content: oklch(92% 0.008 258);
+
+  --color-info: oklch(70% 0.11 230);
+  --color-info-content: oklch(15% 0.02 230);
+  --color-success: oklch(68% 0.14 155);
+  --color-success-content: oklch(15% 0.03 155);
+  --color-warning: oklch(78% 0.13 78);
+  --color-warning-content: oklch(18% 0.03 78);
+  --color-error: oklch(66% 0.17 22);
+  --color-error-content: oklch(15% 0.03 22);
+
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.875rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "raduler-light";
+  color-scheme: light;
+
+  --color-base-100: oklch(100% 0 0);
+  --color-base-200: oklch(97.5% 0.003 258);
+  --color-base-300: oklch(91% 0.006 258);
+  --color-base-content: oklch(24% 0.015 258);
+
+  --color-primary: oklch(52% 0.16 252);
+  --color-primary-content: oklch(99% 0.005 252);
+  --color-secondary: oklch(52% 0.1 220);
+  --color-secondary-content: oklch(99% 0.005 220);
+  --color-accent: oklch(56% 0.11 180);
+  --color-accent-content: oklch(99% 0.005 180);
+  --color-neutral: oklch(35% 0.012 258);
+  --color-neutral-content: oklch(98% 0.005 258);
+
+  --color-info: oklch(55% 0.12 230);
+  --color-info-content: oklch(99% 0.005 230);
+  --color-success: oklch(52% 0.13 155);
+  --color-success-content: oklch(99% 0.005 155);
+  --color-warning: oklch(68% 0.14 78);
+  --color-warning-content: oklch(15% 0.03 78);
+  --color-error: oklch(55% 0.19 22);
+  --color-error-content: oklch(99% 0.005 22);
+
+  --radius-selector: 0.5rem;
+  --radius-field: 0.5rem;
+  --radius-box: 0.875rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 0;
+  --noise: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Motion tokens
+
+   Asymmetric on purpose: old content leaves quickly so it stops competing for
+   attention, new content arrives more gently so there is time to read it.
+--------------------------------------------------------------------------- */
 
 :root {
-  color-scheme: light dark;
+  --duration-exit: 140ms;
+  --duration-enter: 220ms;
+  --duration-move: 380ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+
+  --shadow-raised: 0 1px 2px oklch(0% 0 0 / 12%), 0 4px 16px oklch(0% 0 0 / 8%);
+  --shadow-lifted: 0 2px 4px oklch(0% 0 0 / 14%), 0 12px 32px oklch(0% 0 0 / 14%);
 }
 
-/* Calendar day cells need a stable minimum height so a month with uneven shift
-   counts doesn't produce jagged rows. */
-.day-cell {
-  min-height: 7.5rem;
-}
+@layer base {
+  body {
+    background-color: var(--color-base-200);
+    /* Keeps the sticky header's blur from revealing a hard seam at the top. */
+    min-height: 100dvh;
+  }
 
-/* Chart roles. One series, so one hue — stepped separately for each surface rather
-   than flipped, and validated at >= 3:1 against both. */
-.viz-root {
-  --series-1: #2a78d6;
-  --viz-grid: oklch(0% 0 0 / 10%);
-  --viz-text: oklch(35% 0 0);
-}
+  /* Only keyboard users get a ring; pointer users get the hover/press states. */
+  :focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: var(--radius-field);
+  }
 
-@media (prefers-color-scheme: dark) {
-  :root:where(:not([data-theme="light"])) .viz-root {
-    --series-1: #3987e5;
-    --viz-grid: oklch(100% 0 0 / 14%);
-    --viz-text: oklch(80% 0 0);
+  ::selection {
+    background-color: color-mix(in oklch, var(--color-primary) 35%, transparent);
+  }
+
+  /* A scrollbar that recedes instead of drawing a bright stripe down a dark UI. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-base-300) transparent;
   }
 }
 
-:root[data-theme="dark"] .viz-root {
+/* ---------------------------------------------------------------------------
+   Route transitions (React <ViewTransition> + the browser's View Transitions API)
+
+   These run on the compositor thread as CSS, so no animation library is loaded
+   and route changes stay smooth even while the page is busy fetching.
+--------------------------------------------------------------------------- */
+
+/* The overlay swallows clicks mid-transition; let them reach the live page. */
+::view-transition {
+  pointer-events: none;
+}
+
+::view-transition-old(.nav-forward) {
+  --slide-offset: -48px;
+  animation:
+    var(--duration-exit) var(--ease-in-out) both vt-fade reverse,
+    var(--duration-move) var(--ease-in-out) both vt-slide reverse;
+}
+::view-transition-new(.nav-forward) {
+  --slide-offset: 48px;
+  animation:
+    var(--duration-enter) var(--ease-out) var(--duration-exit) both vt-fade,
+    var(--duration-move) var(--ease-in-out) both vt-slide;
+}
+
+::view-transition-old(.nav-back) {
+  --slide-offset: 48px;
+  animation:
+    var(--duration-exit) var(--ease-in-out) both vt-fade reverse,
+    var(--duration-move) var(--ease-in-out) both vt-slide reverse;
+}
+::view-transition-new(.nav-back) {
+  --slide-offset: -48px;
+  animation:
+    var(--duration-enter) var(--ease-out) var(--duration-exit) both vt-fade,
+    var(--duration-move) var(--ease-in-out) both vt-slide;
+}
+
+/* Skeleton handing off to real content. */
+::view-transition-old(.reveal-out) {
+  animation: var(--duration-exit) var(--ease-in-out) both vt-fade reverse;
+}
+::view-transition-new(.reveal-in) {
+  animation:
+    var(--duration-enter) var(--ease-out) var(--duration-exit) both vt-fade,
+    var(--duration-move) var(--ease-out) both vt-rise;
+}
+
+@keyframes vt-fade {
+  from {
+    opacity: 0;
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+@keyframes vt-slide {
+  from {
+    translate: var(--slide-offset);
+  }
+  to {
+    translate: 0;
+  }
+}
+@keyframes vt-rise {
+  from {
+    transform: translateY(8px);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* The active-tab indicator morphs between positions instead of blinking out and
+   back in, so the nav reads as one moving marker. */
+::view-transition-group(nav-indicator) {
+  animation-duration: var(--duration-move);
+  animation-timing-function: var(--ease-out);
+  z-index: 101;
+}
+::view-transition-old(nav-indicator),
+::view-transition-new(nav-indicator) {
+  animation: none;
+  /* Only the group's position should animate; crossfading a 2px bar just makes
+     it flicker. */
+  mix-blend-mode: normal;
+}
+
+/* The header is the user's spatial anchor — content moves, it does not. */
+::view-transition-group(site-header) {
+  animation: none;
+  z-index: 100;
+}
+::view-transition-old(site-header) {
+  display: none;
+}
+::view-transition-new(site-header) {
+  animation: none;
+}
+
+/* ---------------------------------------------------------------------------
+   Component motion
+--------------------------------------------------------------------------- */
+
+@utility surface {
+  background-color: var(--color-base-100);
+  border: 1px solid color-mix(in oklch, var(--color-base-300) 70%, transparent);
+  border-radius: var(--radius-box);
+  box-shadow: var(--shadow-raised);
+}
+
+/* Hover feedback on things that are actually actionable. */
+@utility lift {
+  transition:
+    transform var(--duration-exit) var(--ease-out),
+    box-shadow var(--duration-exit) var(--ease-out),
+    border-color var(--duration-exit) var(--ease-out);
+
+  &:hover {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-lifted);
+  }
+  &:active {
+    transform: translateY(0);
+    transition-duration: 60ms;
+  }
+}
+
+/* Confirms a claim landed without needing a toast to be read. */
+@keyframes claim-pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in oklch, var(--color-success) 60%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 12px transparent;
+  }
+}
+@utility claimed {
+  animation: claim-pulse 600ms var(--ease-out);
+}
+
+@keyframes shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+@utility shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    color-mix(in oklch, var(--color-base-300) 55%, transparent) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@utility toast-enter {
+  animation: toast-in var(--duration-enter) var(--ease-out) both;
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@utility dialog-enter {
+  animation: dialog-in var(--duration-enter) var(--ease-out) both;
+}
+
+/* Frosted, so content scrolling beneath reads as depth rather than clutter. */
+@utility glass {
+  background-color: color-mix(in oklch, var(--color-base-100) 78%, transparent);
+  backdrop-filter: blur(12px) saturate(140%);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+}
+
+/* Calendar cells need a stable minimum height so an uneven month doesn't
+   produce jagged rows. */
+@utility day-cell {
+  min-height: 8rem;
+}
+
+/* ---------------------------------------------------------------------------
+   Charts — one series, one hue, stepped separately per surface and validated at
+   >= 3:1 against both. Dark is the default here too.
+--------------------------------------------------------------------------- */
+
+.viz-root {
   --series-1: #3987e5;
-  --viz-grid: oklch(100% 0 0 / 14%);
-  --viz-text: oklch(80% 0 0);
+  --viz-grid: oklch(100% 0 0 / 12%);
+  --viz-text: oklch(78% 0.006 258);
+}
+
+[data-theme="raduler-light"] .viz-root {
+  --series-1: #2a78d6;
+  --viz-grid: oklch(0% 0 0 / 10%);
+  --viz-text: oklch(38% 0.01 258);
+}
+
+/* ---------------------------------------------------------------------------
+   Reduced motion
+
+   Positional movement is the most common trigger for motion sensitivity, and
+   this is a tool people use while tired at the end of a shift. Everything
+   collapses to an instant swap; nothing depends on an animation completing.
+--------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation-duration: 1ms !important;
+    animation-delay: 0ms !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
+  }
 }

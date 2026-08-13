@@ -14,9 +14,11 @@ import {
   YAxis,
 } from "recharts";
 import { endOfMonth, startOfMonth, subMonths } from "date-fns";
-import { Download } from "lucide-react";
+import { BarChart3, Download } from "lucide-react";
 import { RequireAdmin } from "@/components/auth/RequireAdmin";
 import { AppShell } from "@/components/AppShell";
+import { PageTransition } from "@/components/PageTransition";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { getHoursSummary, summaryToCsv } from "@/lib/repositories/reports";
 import { downloadBlob } from "@/lib/download";
 import { formatCents, formatMinutes, fromDateInput, toDateInput, toHours } from "@/lib/format";
@@ -26,7 +28,9 @@ export default function AdminReportsPage() {
   return (
     <RequireAdmin>
       <AppShell>
-        <HoursReport />
+        <PageTransition>
+          <HoursReport />
+        </PageTransition>
       </AppShell>
     </RequireAdmin>
   );
@@ -70,7 +74,7 @@ function HoursReport() {
     <div className="space-y-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Hours worked</h1>
+          <h1 className="text-lg font-semibold tracking-tight">Hours worked</h1>
           <p className="text-sm text-base-content/70">
             Confirmed shifts only, from the same database function that totals an
             invoice — the two cannot disagree.
@@ -118,41 +122,25 @@ function HoursReport() {
         </div>
       </div>
 
-      {query.error != null && (
-        <div role="alert" className="alert alert-error">
-          <span className="text-sm">{(query.error as Error).message}</span>
-        </div>
-      )}
-
-      <div className="stats w-full bg-base-100 shadow-sm">
-        <div className="stat">
-          <div className="stat-title">People with hours</div>
-          <div className="stat-value text-2xl">{rows.length}</div>
-        </div>
-        <div className="stat">
-          <div className="stat-title">Shifts covered</div>
-          <div className="stat-value text-2xl">{totals.shifts}</div>
-        </div>
-        <div className="stat">
-          <div className="stat-title">Total hours</div>
-          <div className="stat-value text-2xl">{formatMinutes(totals.minutes)}</div>
-        </div>
-        <div className="stat">
-          <div className="stat-title">Total cost</div>
-          <div className="stat-value text-2xl">{formatCents(totals.cents)}</div>
-        </div>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="People with hours" value={String(rows.length)} loading={query.isLoading} />
+        <StatCard label="Shifts covered" value={String(totals.shifts)} loading={query.isLoading} />
+        <StatCard label="Total hours" value={formatMinutes(totals.minutes)} loading={query.isLoading} />
+        <StatCard label="Total cost" value={formatCents(totals.cents)} loading={query.isLoading} />
       </div>
 
-      <section className="viz-root rounded-box bg-base-100 p-4 shadow-sm">
+      <section className="viz-root surface p-4">
         <h2 className="mb-3 text-sm font-medium">Hours per person</h2>
         {query.isLoading ? (
           <div className="flex h-72 items-center justify-center">
             <span className="loading loading-spinner" aria-label="Loading" />
           </div>
         ) : rows.length === 0 ? (
-          <p className="py-12 text-center text-sm text-base-content/60">
-            No confirmed shifts in this period.
-          </p>
+          <EmptyState
+            icon={BarChart3}
+            title="No confirmed shifts in this period"
+            hint="Hours appear once people claim shifts that start between these dates."
+          />
         ) : (
           <ResponsiveContainer width="100%" height={Math.max(220, rows.length * 38 + 40)}>
             <BarChart
@@ -215,10 +203,33 @@ function HoursReport() {
   );
 }
 
+function StatCard({
+  label,
+  value,
+  loading,
+}: {
+  label: string;
+  value: string;
+  loading: boolean;
+}) {
+  return (
+    <div className="surface p-4">
+      <p className="text-sm text-base-content/60">{label}</p>
+      {loading ? (
+        <div className="shimmer mt-1.5 h-7 w-20 rounded-field bg-base-300/40" />
+      ) : (
+        <p className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight">
+          {value}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** The chart's accessible twin — exact figures, and what the CSV mirrors. */
 function TableView({ rows }: { rows: HoursSummaryRow[] }) {
   return (
-    <div className="overflow-x-auto rounded-box bg-base-100 shadow-sm">
+    <div className="surface overflow-x-auto">
       <table className="table">
         <thead>
           <tr>
@@ -232,13 +243,13 @@ function TableView({ rows }: { rows: HoursSummaryRow[] }) {
         <tbody>
           {rows.length === 0 && (
             <tr>
-              <td colSpan={5} className="py-8 text-center text-base-content/60">
+              <td colSpan={5} className="py-8 text-center text-base-content/50">
                 Nothing to report for this period.
               </td>
             </tr>
           )}
           {rows.map((r) => (
-            <tr key={r.profile_id}>
+            <tr key={r.profile_id} className="border-base-300/40 transition-colors hover:bg-base-300/25">
               <td>{r.full_name || "Unnamed"}</td>
               <td className="text-base-content/70">{r.role}</td>
               <td className="text-right">{r.shifts_count}</td>

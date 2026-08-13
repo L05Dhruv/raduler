@@ -6,9 +6,13 @@ import { addDays, format, startOfMonth, endOfMonth } from "date-fns";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Ban, Trash2 } from "lucide-react";
+import { Activity, Ban, Trash2 } from "lucide-react";
 import { RequireAdmin } from "@/components/auth/RequireAdmin";
 import { AppShell } from "@/components/AppShell";
+import { PageTransition } from "@/components/PageTransition";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 import {
   cancelShift,
   createShifts,
@@ -28,7 +32,9 @@ export default function AdminShiftsPage() {
   return (
     <RequireAdmin>
       <AppShell>
-        <AdminShifts />
+        <PageTransition>
+          <AdminShifts />
+        </PageTransition>
       </AppShell>
     </RequireAdmin>
   );
@@ -55,8 +61,7 @@ type FormValues = z.input<typeof schema>;
 function AdminShifts() {
   const [month] = useState(() => new Date());
   const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
-  const [message, setMessage] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const { run, toast } = useToast();
 
   const range = useMemo(
     () => ({ start: startOfMonth(month), end: addDays(endOfMonth(month), 1) }),
@@ -114,8 +119,6 @@ function AdminShifts() {
   }, [v, weekdays]);
 
   const onSubmit = async (values: FormValues) => {
-    setError(null);
-    setMessage(null);
     const rows = expandPattern({
       title: values.title,
       location: values.location,
@@ -132,45 +135,43 @@ function AdminShifts() {
     });
 
     if (rows.length === 0) {
-      setError("That pattern produces no shifts — check the dates and weekdays.");
+      toast("error", "That pattern produces no shifts — check the dates and weekdays.");
       return;
     }
+    // A mistyped year turns a fortnight into a decade; refuse rather than queue
+    // thousands of inserts.
     if (rows.length > MAX_PATTERN_SHIFTS) {
-      setError(
+      toast(
+        "error",
         `That pattern would create ${rows.length} shifts. Narrow the date range (limit ${MAX_PATTERN_SHIFTS}).`,
       );
       return;
     }
 
-    try {
-      await createShifts(rows);
-      setMessage(`Published ${rows.length} shift${rows.length === 1 ? "" : "s"}.`);
-      await shiftsQuery.mutate();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not publish those shifts.");
-    }
+    const ok = await run(
+      () => createShifts(rows),
+      `Published ${rows.length} shift${rows.length === 1 ? "" : "s"}.`,
+    );
+    if (ok) await shiftsQuery.mutate();
   };
 
   const remove = async (id: string, claimed: boolean) => {
-    setError(null);
-    try {
-      // A claimed shift is cancelled rather than deleted: someone has planned around
-      // it, and the assignment and audit trail need to survive.
-      if (claimed) await cancelShift(id);
-      else await deleteShift(id);
-      await shiftsQuery.mutate();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not remove that shift.");
-    }
+    // A claimed shift is cancelled rather than deleted: someone has planned around
+    // it, and the assignment and audit trail need to survive.
+    const ok = await run(
+      () => (claimed ? cancelShift(id) : deleteShift(id)),
+      claimed ? "Shift cancelled; the assignment record is kept." : "Shift deleted.",
+    );
+    if (ok) await shiftsQuery.mutate();
   };
 
   const shifts = shiftsQuery.data ?? [];
 
   return (
     <div className="grid gap-6 xl:grid-cols-[26rem_1fr]">
-      <section className="card h-fit bg-base-100 shadow-sm">
-        <div className="card-body">
-          <h2 className="card-title text-lg">Publish shifts</h2>
+      <section className="surface h-fit">
+        <div className="p-5">
+          <h2 className="text-base font-semibold">Publish shifts</h2>
           <p className="text-sm text-base-content/70">
             Create one shift or a repeating pattern. Everything published here is open
             for the matching role to claim.
@@ -302,20 +303,9 @@ function AdminShifts() {
               </span>
             </Field>
 
-            {error && (
-              <div role="alert" className="alert alert-error">
-                <span className="text-sm">{error}</span>
-              </div>
-            )}
-            {message && (
-              <div role="status" className="alert alert-success">
-                <span className="text-sm">{message}</span>
-              </div>
-            )}
-
             <button
               type="submit"
-              className="btn btn-primary w-full"
+              className="btn btn-primary lift w-full"
               disabled={isSubmitting || preview.length === 0}
             >
               {isSubmitting
@@ -333,10 +323,10 @@ function AdminShifts() {
             {shifts.length} shifts
           </span>
         </h2>
-        <div className="overflow-x-auto rounded-box bg-base-100 shadow-sm">
+        <div className="surface overflow-x-auto">
           <table className="table table-sm">
             <thead>
-              <tr>
+              <tr className="border-base-300/60">
                 <th>Date</th>
                 <th>Shift</th>
                 <th>Time</th>
@@ -349,15 +339,26 @@ function AdminShifts() {
             <tbody>
               {shiftsQuery.isLoading && (
                 <tr>
-                  <td colSpan={7} className="py-8 text-center">
-                    <span className="loading loading-spinner" aria-label="Loading" />
+                  <td colSpan={7} className="p-0">
+                    <SkeletonRows rows={6} cols={6} />
+                  </td>
+                </tr>
+              )}
+              {!shiftsQuery.isLoading && shifts.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="p-0">
+                    <EmptyState
+                      icon={Activity}
+                      title="Nothing published this month"
+                      hint="Fill in the pattern on the left to open shifts for claiming."
+                    />
                   </td>
                 </tr>
               )}
               {shifts.map((shift) => {
                 const claimed = shift.shift_assignments.length > 0;
                 return (
-                  <tr key={shift.id}>
+                  <tr key={shift.id} className="border-base-300/40 transition-colors hover:bg-base-300/25">
                     <td className="whitespace-nowrap">
                       {format(new Date(shift.starts_at), "EEE d MMM")}
                     </td>

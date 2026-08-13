@@ -83,7 +83,11 @@ Left unset, anyone may register — acceptable while demoing, not otherwise.
 ### Application hardening
 
 - Content-Security-Policy, `default-src 'self'`, with `connect-src` narrowed to the
-  Supabase origin (`src/lib/security/csp.ts`).
+  Supabase origin (`src/lib/security/csp.ts`). Emitted in **production builds only**:
+  React's development build calls `eval()`, and with the policy applied the dev server
+  fails to hydrate, leaving a dead page whose only symptom is one console line. A meta
+  CSP on localhost protects nothing, and the shipped policy is unchanged — verify it on
+  the built output, not under `pnpm dev`.
 - zod validation on every form, backed by SQL `CHECK` constraints so the rules hold
   regardless of what the client sends.
 - CSV export neutralises leading `=`, `+`, `-` and `@`, so a name typed into the app

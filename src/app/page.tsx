@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
+import { BootScreen } from "@/components/auth/RequireAuth";
 
 export default function HomePage() {
   const { user, loading } = useAuth();
@@ -13,9 +14,5 @@ export default function HomePage() {
     router.replace(user ? "/calendar/" : "/login/");
   }, [user, loading, router]);
 
-  return (
-    <div className="flex min-h-screen items-center justify-center">
-      <span className="loading loading-spinner loading-lg" aria-label="Loading" />
-    </div>
-  );
+  return <BootScreen />;
 }

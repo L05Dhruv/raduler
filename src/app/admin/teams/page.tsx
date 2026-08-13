@@ -2,9 +2,13 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { Plus, Trash2, UserMinus } from "lucide-react";
+import { Plus, Trash2, UserMinus, Users } from "lucide-react";
 import { RequireAdmin } from "@/components/auth/RequireAdmin";
 import { AppShell } from "@/components/AppShell";
+import { PageTransition } from "@/components/PageTransition";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { SkeletonRows } from "@/components/ui/Skeleton";
+import { useToast } from "@/components/ui/Toast";
 import {
   addTeamMember,
   createTeam,
@@ -21,7 +25,9 @@ export default function AdminTeamsPage() {
   return (
     <RequireAdmin>
       <AppShell>
-        <AdminTeams />
+        <PageTransition>
+          <AdminTeams />
+        </PageTransition>
       </AppShell>
     </RequireAdmin>
   );
@@ -30,29 +36,20 @@ export default function AdminTeamsPage() {
 function AdminTeams() {
   const teamsQuery = useSWR("teams", listTeams);
   const peopleQuery = useSWR("profiles", listProfiles);
-  const [error, setError] = useState<string | null>(null);
+  const { run: runToast } = useToast();
   const [newTeam, setNewTeam] = useState({ name: "", description: "" });
 
   const people = peopleQuery.data ?? [];
   const byId = new Map(people.map((p) => [p.id, p]));
 
-  const run = async (fn: () => Promise<unknown>) => {
-    setError(null);
-    try {
-      await fn();
+  const run = async (fn: () => Promise<unknown>, success?: string) => {
+    if (await runToast(fn, success)) {
       await Promise.all([teamsQuery.mutate(), peopleQuery.mutate()]);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "That change did not go through.");
     }
   };
 
   return (
     <div className="space-y-8">
-      {error && (
-        <div role="alert" className="alert alert-error">
-          <span className="text-sm">{error}</span>
-        </div>
-      )}
 
       <section className="space-y-3">
         <h1 className="text-xl font-semibold tracking-tight">Teams</h1>
@@ -65,7 +62,7 @@ function AdminTeams() {
             void run(async () => {
               await createTeam(newTeam.name.trim(), newTeam.description.trim());
               setNewTeam({ name: "", description: "" });
-            });
+            }, `Created ${newTeam.name.trim()}.`);
           }}
         >
           <input
@@ -82,22 +79,32 @@ function AdminTeams() {
             value={newTeam.description}
             onChange={(e) => setNewTeam((t) => ({ ...t, description: e.target.value }))}
           />
-          <button type="submit" className="btn btn-primary btn-sm gap-1">
+          <button type="submit" className="btn btn-primary btn-sm lift gap-1">
             <Plus className="h-4 w-4" />
             Add team
           </button>
         </form>
+
+        {!teamsQuery.isLoading && (teamsQuery.data ?? []).length === 0 && (
+          <div className="surface">
+            <EmptyState
+              icon={Users}
+              title="No teams yet"
+              hint="Teams group shifts by subspecialty — Body, Neuro, Breast. Add one above."
+            />
+          </div>
+        )}
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {(teamsQuery.data ?? []).map((team) => {
             const memberIds = new Set(team.team_members.map((m) => m.profile_id));
             const candidates = people.filter((p) => !memberIds.has(p.id));
             return (
-              <div key={team.id} className="card bg-base-100 shadow-sm">
-                <div className="card-body gap-2">
+              <div key={team.id} className="surface lift">
+                <div className="flex flex-col gap-3 p-5">
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <h2 className="card-title text-base">{team.name}</h2>
+                      <h2 className="font-semibold">{team.name}</h2>
                       <p className="text-sm text-base-content/70">
                         {team.description || "No description"}
                       </p>
@@ -105,7 +112,7 @@ function AdminTeams() {
                     <button
                       className="btn btn-ghost btn-xs"
                       aria-label={`Delete ${team.name}`}
-                      onClick={() => void run(() => deleteTeam(team.id))}
+                      onClick={() => void run(() => deleteTeam(team.id), `Deleted ${team.name}.`)}
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -118,7 +125,7 @@ function AdminTeams() {
                     {team.team_members.map((m) => (
                       <li
                         key={m.profile_id}
-                        className="flex items-center justify-between rounded bg-base-200 px-2 py-1 text-sm"
+                        className="flex items-center justify-between rounded-field bg-base-200/80 px-2 py-1 text-sm"
                       >
                         <span>
                           {byId.get(m.profile_id)?.full_name ?? "Unknown"}
@@ -130,7 +137,7 @@ function AdminTeams() {
                           className="btn btn-ghost btn-xs"
                           aria-label="Remove from team"
                           onClick={() =>
-                            void run(() => removeTeamMember(team.id, m.profile_id))
+                            void run(() => removeTeamMember(team.id, m.profile_id), "Removed from team.")
                           }
                         >
                           <UserMinus className="h-3.5 w-3.5" />
@@ -145,7 +152,7 @@ function AdminTeams() {
                     value=""
                     onChange={(e) => {
                       if (!e.target.value) return;
-                      void run(() => addTeamMember(team.id, e.target.value));
+                      void run(() => addTeamMember(team.id, e.target.value), "Added to team.");
                     }}
                   >
                     <option value="">Add a member…</option>
@@ -168,10 +175,10 @@ function AdminTeams() {
           Role and rate changes go through an admin-only database function, which
           records who made them in the audit log. Nobody can edit their own.
         </p>
-        <div className="overflow-x-auto rounded-box bg-base-100 shadow-sm">
+        <div className="surface overflow-x-auto">
           <table className="table table-sm">
             <thead>
-              <tr>
+              <tr className="border-base-300/60">
                 <th>Name</th>
                 <th>Email</th>
                 <th>Role</th>
@@ -180,12 +187,22 @@ function AdminTeams() {
               </tr>
             </thead>
             <tbody>
+              {peopleQuery.isLoading && (
+                <tr>
+                  <td colSpan={5} className="p-0">
+                    <SkeletonRows rows={4} cols={5} />
+                  </td>
+                </tr>
+              )}
               {people.map((person) => (
                 <PersonRow
                   key={person.id}
                   person={person}
                   onSave={(role, cents, active) =>
-                    run(() => updateProfileAsAdmin(person.id, role, cents, active))
+                    run(
+                      () => updateProfileAsAdmin(person.id, role, cents, active),
+                      `Updated ${person.full_name || person.email}.`,
+                    )
                   }
                 />
               ))}

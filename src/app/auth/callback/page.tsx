@@ -4,7 +4,7 @@ import { useEffect, useSyncExternalStore } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
-import { TriangleAlert } from "lucide-react";
+import { Activity, TriangleAlert } from "lucide-react";
 
 /**
  * Landing point for the magic link. The Supabase client is created with
@@ -40,9 +40,9 @@ export default function AuthCallbackPage() {
 
   if (linkError) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-base-200 p-4">
-        <div className="card w-full max-w-md bg-base-100 shadow-xl">
-          <div className="card-body">
+      <div className="grid min-h-dvh place-items-center p-4">
+        <div className="surface dialog-enter w-full max-w-md">
+          <div className="p-6">
             <div role="alert" className="alert alert-error">
               <TriangleAlert className="h-5 w-5" aria-hidden="true" />
               <span className="text-sm">{linkError}</span>
@@ -51,7 +51,7 @@ export default function AuthCallbackPage() {
               Sign-in links expire quickly and only work in the browser that requested
               them. Request a fresh one to continue.
             </p>
-            <Link href="/login/" className="btn btn-primary mt-4">
+            <Link href="/login/" className="btn btn-primary lift mt-4">
               Back to sign in
             </Link>
           </div>
@@ -61,9 +61,18 @@ export default function AuthCallbackPage() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center gap-4">
-      <span className="loading loading-spinner loading-lg" aria-label="Signing in" />
-      <p className="text-sm text-base-content/70">Signing you in…</p>
+    <div className="grid min-h-dvh place-items-center">
+      <div className="flex flex-col items-center gap-3">
+        <span className="grid h-11 w-11 place-items-center rounded-selector bg-primary text-primary-content">
+          <Activity className="h-5 w-5" aria-hidden="true" />
+        </span>
+        <p className="text-sm text-base-content/60">Signing you in…</p>
+        <span
+          className="loading loading-dots loading-sm text-base-content/40"
+          role="status"
+          aria-label="Signing in"
+        />
+      </div>
     </div>
   );
 }
