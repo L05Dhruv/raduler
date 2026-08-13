@@ -1,0 +1,16 @@
+@import "tailwindcss";
+@plugin "daisyui" {
+  themes:
+    corporate --default,
+    business --prefersdark;
+}
+
+:root {
+  color-scheme: light dark;
+}
+
+/* Calendar day cells need a stable minimum height so a month with uneven shift
+   counts doesn't produce jagged rows. */
+.day-cell {
+  min-height: 7.5rem;
+}
