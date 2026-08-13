@@ -161,8 +161,14 @@ In rough order of value:
    biggest risk is not a broken policy, it is an account that outlives someone's
    employment. Directory-driven deprovisioning fixes that; `signInWithOtp` is one call
    to swap for `signInWithSSO`, and none of the authorisation logic changes.
-3. **Review every policy against the negative tests below**, and add a regression test
-   per policy.
+3. ~~Review every policy against the negative tests below, and add a regression test per
+   policy.~~ **Done** — `tests/migrations.test.ts`. It applies the schema to real
+   Postgres and then drops the session to `authenticated` or `anon` with `SET ROLE`, so
+   the policies apply as they do for a signed-in user rather than being bypassed by a
+   superuser. Every check in the console list below runs in CI, alongside the grant
+   baseline, the column privileges, the audit log's immutability and each RPC's
+   refusals. What it cannot reach is PostgREST and real JWTs, so keep the manual pass
+   for the round trip.
 4. **Set the signup domain allowlist.**
 5. **Host somewhere that can serve security headers** — the CSP caveats above go away.
 
@@ -202,6 +208,12 @@ When adding a table: `revoke all on public.<table> from anon, authenticated;` th
 back only what is needed, and enable RLS before inserting a row.
 
 ## Verifying the boundary
+
+**Every check in this section is also asserted automatically** by
+`tests/migrations.test.ts`, against the same schema on a real Postgres. Run `pnpm
+test:sql` for the fast answer. What follows is the manual pass, which is still worth
+doing after a deploy because it goes through PostgREST and a real JWT — the two things
+the automated version cannot reach.
 
 Start with the anonymous checks — no session required, and they confirm the deny-by-default
 grants are intact. Every one must be refused:
@@ -256,6 +268,7 @@ await supabase.rpc('set_shift_hours', { p_shift_id: invoicedShiftId,
 // Rejected: the helper is revoked from `authenticated`, not just `anon`.
 await supabase.rpc('apply_shift_hours', { p_shift_id: myShiftId,
   p_start: null, p_end: null })
+
 ```
 
 And the race: call `claim_shift` for the same shift from two browsers at once. Exactly

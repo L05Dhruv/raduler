@@ -103,6 +103,7 @@ to a commit SHA.
 | `pnpm build` | Static export to `out/` |
 | `pnpm test` | Vitest in watch mode |
 | `pnpm test:run` | Vitest once (what CI runs) |
+| `pnpm test:sql` | Just the migration tests — runs the schema on real Postgres |
 | `pnpm lint` | ESLint, including the React Compiler rules |
 
 ## Layout
@@ -124,8 +125,25 @@ src/
 │  └─ pdf/invoice.ts         browser-side invoice rendering
 └─ types/db.ts               mirrors the migration
 supabase/                    migration and seed
-tests/                       unit tests for the date, pattern and CSV logic
+tests/
+├─ migrations.test.ts        applies the schema to real Postgres and probes the rules
+└─ *.test.ts                 unit tests for the date, pattern and CSV logic
 ```
+
+**The migration tests are the important ones.** Authorisation lives in Postgres, so the
+checks that matter cannot be written in TypeScript: which column a user holds `UPDATE`
+on, whether an RPC refuses the wrong caller, whether one radiologist can read another's
+invoice. `tests/migrations.test.ts` runs `0001` and `0005` against PostgreSQL compiled to
+WebAssembly ([PGlite](https://pglite.dev)) — the real engine, not a mock — with
+Supabase's `auth` schema stubbed, then asserts each rule.
+
+Crucially it does not stay a superuser. `SET ROLE authenticated` drops the session to a
+real grantee, so row-level security applies exactly as it does for a signed-in user, and
+the policies are tested rather than bypassed. That makes the manual console checklist in
+[SECURITY.md](./SECURITY.md) automatic. Two seconds, and part of `pnpm test:run`.
+
+It cannot reach PostgREST, JWT issuance or Supabase's own `auth` implementation. Green
+means the SQL is right, not that the round trip is.
 
 ## Notes on the design
 

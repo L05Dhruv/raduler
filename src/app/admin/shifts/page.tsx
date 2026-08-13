@@ -2,11 +2,11 @@
 
 import { useMemo, useState } from "react";
 import useSWR from "swr";
-import { addDays, format, startOfMonth, endOfMonth } from "date-fns";
+import { addDays, addMonths, format, startOfMonth, endOfMonth, subMonths } from "date-fns";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { Activity, Ban, Trash2 } from "lucide-react";
+import { Activity, Ban, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 import { RequireAdmin } from "@/components/auth/RequireAdmin";
 import { AppShell } from "@/components/AppShell";
 import { PageTransition } from "@/components/PageTransition";
@@ -60,7 +60,7 @@ const schema = z.object({
 type FormValues = z.input<typeof schema>;
 
 function AdminShifts() {
-  const [month] = useState(() => new Date());
+  const [month, setMonth] = useState(() => new Date());
   const [weekdays, setWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
   const { run, toast } = useToast();
 
@@ -336,17 +336,46 @@ function AdminShifts() {
       </section>
 
       <section className="space-y-3">
-        <h2 className="text-lg font-semibold">
-          {format(month, "MMMM yyyy")} roster
-          <span className="ml-2 text-sm font-normal text-base-content/60">
-            {shifts.length} shifts
-          </span>
-          {partlyUncovered > 0 && (
-            <span className="ml-2 text-sm font-normal text-warning">
-              · {partlyUncovered} partly uncovered
+        {/* Same controls and ordering as the calendar and my-schedule, so the roster
+            is navigable rather than pinned to whichever month it was opened in — a
+            pattern published into next month was previously impossible to review, and
+            the uncovered count below only ever spoke for the current one. */}
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-1">
+            <button
+              className="btn btn-ghost btn-sm btn-square"
+              aria-label="Previous month"
+              onClick={() => setMonth((m) => subMonths(m, 1))}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <h2 className="min-w-40 text-center text-lg font-semibold tracking-tight">
+              {format(month, "MMMM yyyy")}
+            </h2>
+            <button
+              className="btn btn-ghost btn-sm btn-square"
+              aria-label="Next month"
+              onClick={() => setMonth((m) => addMonths(m, 1))}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <button
+              className="btn btn-ghost btn-sm ml-1"
+              onClick={() => setMonth(new Date())}
+            >
+              Today
+            </button>
+          </div>
+
+          <div className="flex items-center gap-2 pr-1 text-sm">
+            <span className="text-base-content/60">
+              {shifts.length} shift{shifts.length === 1 ? "" : "s"}
             </span>
-          )}
-        </h2>
+            {partlyUncovered > 0 && (
+              <span className="text-warning">· {partlyUncovered} partly uncovered</span>
+            )}
+          </div>
+        </div>
         <div className="surface overflow-x-auto">
           <table className="table table-sm">
             <thead>
