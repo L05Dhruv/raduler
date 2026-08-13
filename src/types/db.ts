@@ -114,5 +114,8 @@ export interface HoursSummaryRow {
 
 /** A shift joined to its confirmed assignment, as the calendar consumes it. */
 export interface ShiftWithAssignment extends Shift {
-  shift_assignments: Pick<ShiftAssignment, "id" | "profile_id" | "status">[];
+  shift_assignments: Pick<
+    ShiftAssignment,
+    "id" | "profile_id" | "status" | "actual_start" | "actual_end"
+  >[];
 }

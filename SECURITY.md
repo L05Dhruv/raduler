@@ -19,7 +19,7 @@ A signed-in user's JWT decides what they can see:
 | --- | --- | --- |
 | `profiles` | own row | all rows |
 | `shifts` | read all | full control |
-| `shift_assignments` | read own | read all |
+| `shift_assignments` | read own, set own hours | read all, set anyone's hours |
 | `time_off` | full control of own, while still pending | read all, approve or deny |
 | `invoices` | read own | full control |
 | `audit_log` | nothing | read |
@@ -36,8 +36,11 @@ the check outside RLS breaks the cycle.
   through `admin_update_profile()`.
 - `time_off` insert and update policies both require `status = 'requested'`, so a user
   cannot approve their own leave. Decisions go through `decide_time_off()`.
-- `shift_assignments` has no `INSERT` or `UPDATE` grant for anyone. The only way a row
-  appears is `claim_shift()`.
+- `shift_assignments` has no `INSERT` or `UPDATE` grant for anyone. The only ways a row
+  appears or changes are `claim_shift()`, `release_shift()` and `set_shift_hours()`.
+- Hours are bounded by the published shift. A radiologist may work 1–5 of a 12–7
+  posting, but not 11–8: `set_shift_hours()` refuses anything outside the window for
+  anyone but an administrator. See below for why that bound is the whole control.
 
 ### Claiming a shift is atomic and checked server-side
 
@@ -45,6 +48,43 @@ the check outside RLS breaks the cycle.
 the caller's role does not match, if the dates fall inside their approved time off, or
 if they already hold an overlapping shift. A partial unique index on confirmed
 assignments makes double-booking impossible even under a race.
+
+### Choosing your own hours is not choosing your own pay
+
+Radiologists set the hours they actually work on a shift they hold — the 12–7 posting
+worked 1–5 on a lighter day. `shift_assignments.actual_start / actual_end` carry the
+choice, and because every hours and money expression reads
+`coalesce(actual, scheduled)`, reports and invoices follow with no separate code path.
+
+That means these two columns *are* the pay input, so `set_shift_hours()`
+(`supabase/migrations/0005_flexible_hours.sql`) guards them in that order of severity:
+
+1. **Only your own shift**, unless you are an administrator.
+2. **Only inside the published window.** Without this, anyone holding a shift could bill
+   any hours they liked. Administrators are exempt, because recording a genuine overrun
+   is their job and the audit log names them for it.
+3. **Never once invoiced.** `create_invoice()` snapshots minutes and amounts into
+   `invoice_lines`; letting the source hours move afterwards is precisely how a report
+   and an invoice for the same period come to disagree. The shift is frozen and the
+   refusal names the invoice.
+4. **Never overlapping another shift the same person holds**, compared on effective
+   rather than scheduled times, so no hour is billed twice. Unreachable for a regular
+   user — narrowing inside a window `claim_shift()` already proved conflict-free cannot
+   create a conflict — but reachable through the administrator exemption in 2.
+
+Every change writes an `assignment.hours` audit row with the old and new window and
+whether an administrator made it on someone else's behalf.
+
+The shared body lives in `private.apply_shift_hours()`, which returns a refusal reason
+instead of raising so that one frozen day does not roll back a whole month's bulk edit.
+It authenticates and checks ownership itself rather than trusting its callers, and
+`EXECUTE` is revoked from `authenticated` as well as `anon` — `authenticated` holds
+`USAGE` on schema `private`, so the revoke is what keeps it unreachable.
+
+**What this does not solve:** narrowing your hours leaves the rest of the shift
+unstaffed while it still reads `filled`. That is a scheduling problem rather than a
+security one, and the admin roster counts and labels the affected shifts rather than
+reopening them automatically — reassigning half a shift is a decision for a person.
 
 ### Money is never client-supplied
 
@@ -196,6 +236,26 @@ await supabase.from('audit_log').select('*')
 
 // Raises: the shift falls inside approved time off.
 await supabase.rpc('claim_shift', { p_shift_id: overlappingShiftId })
+
+// Accepted: any window inside a 12-7 shift you hold.
+await supabase.rpc('set_shift_hours', { p_shift_id: myShiftId,
+  p_start: '2026-09-01T13:00:00-04:00', p_end: '2026-09-01T17:00:00-04:00' })
+
+// Raises "outside the published shift": the bound is the whole control here.
+await supabase.rpc('set_shift_hours', { p_shift_id: myShiftId,
+  p_start: '2026-09-01T06:00:00-04:00', p_end: '2026-09-01T23:00:00-04:00' })
+
+// Raises "You can only change the hours on your own shifts."
+await supabase.rpc('set_shift_hours', { p_shift_id: someoneElsesShiftId,
+  p_start: '2026-09-01T13:00:00-04:00', p_end: '2026-09-01T17:00:00-04:00' })
+
+// Raises and names the invoice, once an admin has invoiced that period.
+await supabase.rpc('set_shift_hours', { p_shift_id: invoicedShiftId,
+  p_start: '2026-09-01T13:00:00-04:00', p_end: '2026-09-01T17:00:00-04:00' })
+
+// Rejected: the helper is revoked from `authenticated`, not just `anon`.
+await supabase.rpc('apply_shift_hours', { p_shift_id: myShiftId,
+  p_start: null, p_end: null })
 ```
 
 And the race: call `claim_shift` for the same shift from two browsers at once. Exactly

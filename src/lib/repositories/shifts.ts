@@ -1,4 +1,5 @@
 import { getSupabase } from "@/lib/supabase/client";
+import type { HourWindow } from "@/lib/shiftHours";
 import type { Shift, ShiftWithAssignment, UserRole } from "@/types/db";
 
 /**
@@ -11,7 +12,7 @@ import type { Shift, ShiftWithAssignment, UserRole } from "@/types/db";
 export async function listShifts(from: Date, to: Date): Promise<ShiftWithAssignment[]> {
   const { data, error } = await getSupabase()
     .from("shifts")
-    .select("*, shift_assignments(id, profile_id, status)")
+    .select("*, shift_assignments(id, profile_id, status, actual_start, actual_end)")
     .gte("starts_at", from.toISOString())
     .lt("starts_at", to.toISOString())
     .neq("status", "cancelled")
@@ -60,6 +61,53 @@ export async function claimShift(shiftId: string): Promise<void> {
 export async function releaseShift(shiftId: string): Promise<void> {
   const { error } = await getSupabase().rpc("release_shift", { p_shift_id: shiftId });
   if (error) throw new Error(error.message);
+}
+
+/**
+ * Sets the hours actually worked on a shift, within the published window. `null`
+ * restores the published hours.
+ *
+ * The RPC re-checks the window, the invoice freeze and the overlap rule; the caller
+ * validating first with `resolveHours()` is a courtesy, not the control.
+ */
+export async function setShiftHours(
+  shiftId: string,
+  window: HourWindow | null,
+): Promise<void> {
+  const { error } = await getSupabase().rpc("set_shift_hours", {
+    p_shift_id: shiftId,
+    p_start: window ? window.start.toISOString() : null,
+    p_end: window ? window.end.toISOString() : null,
+  });
+  if (error) throw new Error(error.message);
+}
+
+/** One row per shift submitted — a refusal names the rule that stopped it. */
+export interface BulkHoursResult {
+  shift_id: string;
+  applied: boolean;
+  reason: string | null;
+}
+
+/**
+ * Applies one window to many shifts — "I work 12-7 most days".
+ *
+ * Timestamps are built by the caller because only the browser knows the user's time
+ * zone. Shifts are reported individually rather than all-or-nothing, so an already
+ * invoiced day does not discard the rest of the month.
+ */
+export async function setShiftHoursBulk(
+  entries: { shiftId: string; window: HourWindow }[],
+): Promise<BulkHoursResult[]> {
+  const { data, error } = await getSupabase().rpc("set_shift_hours_bulk", {
+    p_entries: entries.map((e) => ({
+      shift_id: e.shiftId,
+      start: e.window.start.toISOString(),
+      end: e.window.end.toISOString(),
+    })),
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as BulkHoursResult[];
 }
 
 export interface NewShift {

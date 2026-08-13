@@ -46,7 +46,11 @@ Create a project at [supabase.com](https://supabase.com) (free tier is enough), 
 the SQL editor run, in order:
 
 1. `supabase/migrations/0001_init.sql` — tables, grants, RLS policies, RPCs, audit log
-2. `supabase/seed.sql` — four teams and eight weeks of open shifts (optional)
+2. `supabase/migrations/0005_flexible_hours.sql` — per-day hours within a published shift
+3. `supabase/seed.sql` — four teams and eight weeks of open shifts (optional)
+
+(`0002`–`0004` fix privileges on projects created before those defects were found. `0001`
+was corrected in place, so a fresh install skips them — see the header of each file.)
 
 Then under **Authentication → URL Configuration**, add both redirect URLs:
 
@@ -107,7 +111,7 @@ to a commit SHA.
 src/
 ├─ app/                      routes; every data-touching page is a client component
 │  ├─ calendar/              month grid, claim and release
-│  ├─ my-schedule/           claimed shifts and running hours
+│  ├─ my-schedule/           claimed shifts, chosen hours and running hours
 │  ├─ time-off/              request and withdraw blackout dates
 │  └─ admin/                 shifts · time-off queue · teams · reports · invoices
 ├─ components/               AppShell and the auth guards
@@ -116,6 +120,7 @@ src/
 │  ├─ repositories/          the only modules that talk to Supabase
 │  ├─ calendar.ts            month-grid maths
 │  ├─ shiftPattern.ts        expands a recurring pattern into shifts
+│  ├─ shiftHours.ts          resolves chosen hours inside a published shift
 │  └─ pdf/invoice.ts         browser-side invoice rendering
 └─ types/db.ts               mirrors the migration
 supabase/                    migration and seed
@@ -133,9 +138,19 @@ numbers the database has already decided on.
 unique index on confirmed assignments. Two people clicking "claim" in the same
 millisecond cannot both win.
 
-**Time zones.** Recurring shifts are built from local wall-clock times, so a pattern
-that crosses a daylight-saving boundary keeps its 08:00 start instead of drifting; there
-is a test for it.
+**Hours are the radiologist's to choose, within the published window.** A 12–7 posting
+can be worked 1–5; `shift_assignments.actual_start / actual_end` hold the choice and
+every hours and money expression reads `coalesce(actual, scheduled)`, so reports and
+invoices follow automatically. The window is the boundary that matters: pay derives from
+these columns, so an unbounded self-service edit would be a self-service pay rise.
+`set_shift_hours()` enforces it, refuses any shift already carried onto an invoice, and
+the admin roster counts shifts left partly unstaffed — narrowing your hours does not
+reopen the remainder, and somebody has to notice the hole.
+
+**Time zones.** Recurring shifts and chosen hours are both built from local wall-clock
+times, so a pattern that crosses a daylight-saving boundary keeps its 08:00 start
+instead of drifting, and an overnight shift's "02:00" resolves to the following day.
+There are tests for both.
 
 ## Licence
 

@@ -3,16 +3,23 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { format, startOfMonth, endOfMonth, addMonths, subMonths } from "date-fns";
-import { CalendarClock, ChevronLeft, ChevronRight } from "lucide-react";
+import { CalendarClock, ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { PageTransition } from "@/components/PageTransition";
+import { ShiftHoursDialog } from "@/components/ShiftHoursDialog";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { SkeletonRows } from "@/components/ui/Skeleton";
 import { useToast } from "@/components/ui/Toast";
 import { useAuth } from "@/contexts/AuthContext";
-import { listMyShifts, releaseShift } from "@/lib/repositories/shifts";
+import {
+  listMyShifts,
+  releaseShift,
+  setShiftHours,
+  setShiftHoursBulk,
+} from "@/lib/repositories/shifts";
 import { getHoursSummary } from "@/lib/repositories/reports";
+import { resolveHours, toTimeInput, type HourWindow } from "@/lib/shiftHours";
 import {
   formatCents,
   formatMinutes,
@@ -44,8 +51,10 @@ interface AssignmentRow {
 
 function MySchedule() {
   const { profile } = useAuth();
-  const { run } = useToast();
+  const { run, toast } = useToast();
   const [month, setMonth] = useState(() => new Date());
+  const [editing, setEditing] = useState<AssignmentRow | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const range = useMemo(
     () => ({ start: startOfMonth(month), end: endOfMonth(month) }),
@@ -62,41 +71,175 @@ function MySchedule() {
     getHoursSummary(range.start, range.end),
   );
 
-  const rows = (shiftsQuery.data ?? []) as unknown as AssignmentRow[];
+  // Memoised so the `usual` fallback below is not recomputed on every render — the
+  // `?? []` would otherwise hand it a fresh array each time.
+  const rows = useMemo(
+    () => (shiftsQuery.data ?? []) as unknown as AssignmentRow[],
+    [shiftsQuery.data],
+  );
   const mine = summaryQuery.data?.find((s) => s.profile_id === profile?.id);
   const totals = summaryQuery.data
     ? { minutes: mine?.total_minutes ?? 0, cents: mine?.total_cents ?? 0 }
     : null;
   const loading = shiftsQuery.isLoading;
 
+  /**
+   * Seeds the bulk dialog. A window already chosen this month is the best guess at
+   * someone's usual hours; failing that, the first shift's published times, so the
+   * dialog opens on something plausible rather than an arbitrary 09:00.
+   */
+  const usual = useMemo(() => {
+    const chosen = rows.find((r) => r.actual_start && r.actual_end);
+    if (chosen) {
+      return {
+        start: toTimeInput(new Date(chosen.actual_start!)),
+        end: toTimeInput(new Date(chosen.actual_end!)),
+      };
+    }
+    if (rows[0]) {
+      return {
+        start: toTimeInput(new Date(rows[0].shifts.starts_at)),
+        end: toTimeInput(new Date(rows[0].shifts.ends_at)),
+      };
+    }
+    return { start: "08:00", end: "16:00" };
+  }, [rows]);
+
+  /** Both the roster and the hours total move whenever an assignment changes. */
+  const refresh = () => Promise.all([shiftsQuery.mutate(), summaryQuery.mutate()]);
+
   const release = async (row: AssignmentRow) => {
     const ok = await run(
       () => releaseShift(row.shift_id),
       `Released ${row.shifts.title}.`,
     );
-    if (ok) await Promise.all([shiftsQuery.mutate(), summaryQuery.mutate()]);
+    if (ok) await refresh();
+  };
+
+  /**
+   * The dialog handlers return a reason instead of toasting it: a refused window is
+   * something to correct in the form that is still open, not a notice to acknowledge
+   * after it has closed. Successes toast and close, as everywhere else.
+   */
+  const saveHours = async (row: AssignmentRow, startTime: string, endTime: string) => {
+    const resolved = resolveHours(
+      row.shifts.starts_at,
+      row.shifts.ends_at,
+      startTime,
+      endTime,
+    );
+    if (!resolved.ok) return resolved.reason;
+
+    try {
+      await setShiftHours(row.shift_id, resolved.window);
+    } catch (e) {
+      return e instanceof Error ? e.message : "That did not go through.";
+    }
+    await refresh();
+    toast(
+      "success",
+      `${row.shifts.title} set to ${formatTimeRange(
+        resolved.window.start.toISOString(),
+        resolved.window.end.toISOString(),
+      )}.`,
+    );
+    return null;
+  };
+
+  const resetHours = async (row: AssignmentRow) => {
+    try {
+      await setShiftHours(row.shift_id, null);
+    } catch (e) {
+      return e instanceof Error ? e.message : "That did not go through.";
+    }
+    await refresh();
+    toast("success", `${row.shifts.title} is back to its published hours.`);
+    return null;
+  };
+
+  /**
+   * "I do 12-7 most of the days" — one window across every shift held this month.
+   * Shifts the window cannot fit are counted and skipped rather than failing the batch,
+   * and the database skips any day already carried onto an invoice.
+   */
+  const applyToMonth = async (startTime: string, endTime: string) => {
+    const entries: { shiftId: string; window: HourWindow }[] = [];
+    let unfitted = 0;
+
+    for (const row of rows) {
+      const resolved = resolveHours(
+        row.shifts.starts_at,
+        row.shifts.ends_at,
+        startTime,
+        endTime,
+      );
+      if (resolved.ok) entries.push({ shiftId: row.shift_id, window: resolved.window });
+      else unfitted += 1;
+    }
+
+    if (entries.length === 0) {
+      return "Those hours do not fit any shift you hold this month.";
+    }
+
+    let results;
+    try {
+      results = await setShiftHoursBulk(entries);
+    } catch (e) {
+      return e instanceof Error ? e.message : "That did not go through.";
+    }
+    await refresh();
+
+    const applied = results.filter((r) => r.applied).length;
+    const refused = results.filter((r) => !r.applied);
+
+    // Nothing changed at all: keep the dialog open and say why, rather than closing on
+    // a success-shaped toast that reports zero.
+    if (applied === 0) {
+      return refused[0]?.reason ?? "None of those shifts could be changed.";
+    }
+
+    toast("success", `Applied to ${applied} shift${applied === 1 ? "" : "s"}.`);
+    const untouched = refused.length + unfitted;
+    if (untouched > 0) {
+      toast(
+        "info",
+        `${untouched} left unchanged — ${
+          refused[0]?.reason ?? "the window does not fit the published hours"
+        }`,
+      );
+    }
+    return null;
   };
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center gap-1">
-        <button
-          className="btn btn-ghost btn-sm btn-square"
-          aria-label="Previous month"
-          onClick={() => setMonth((m) => subMonths(m, 1))}
-        >
-          <ChevronLeft className="h-4 w-4" />
-        </button>
-        <h1 className="min-w-40 text-center text-lg font-semibold tracking-tight">
-          {format(month, "MMMM yyyy")}
-        </h1>
-        <button
-          className="btn btn-ghost btn-sm btn-square"
-          aria-label="Next month"
-          onClick={() => setMonth((m) => addMonths(m, 1))}
-        >
-          <ChevronRight className="h-4 w-4" />
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-1">
+          <button
+            className="btn btn-ghost btn-sm btn-square"
+            aria-label="Previous month"
+            onClick={() => setMonth((m) => subMonths(m, 1))}
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <h1 className="min-w-40 text-center text-lg font-semibold tracking-tight">
+            {format(month, "MMMM yyyy")}
+          </h1>
+          <button
+            className="btn btn-ghost btn-sm btn-square"
+            aria-label="Next month"
+            onClick={() => setMonth((m) => addMonths(m, 1))}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+        </div>
+
+        {rows.length > 0 && (
+          <button className="btn btn-sm lift gap-1.5" onClick={() => setBulkOpen(true)}>
+            <Clock className="h-3.5 w-3.5" aria-hidden="true" />
+            Set my usual hours
+          </button>
+        )}
       </div>
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -152,7 +295,10 @@ function MySchedule() {
                         {adjusted && (
                           <span
                             className="badge badge-ghost badge-xs ml-2"
-                            title="An administrator recorded different worked times"
+                            title={`Published ${formatTimeRange(
+                              row.shifts.starts_at,
+                              row.shifts.ends_at,
+                            )}`}
                           >
                             adjusted
                           </span>
@@ -167,7 +313,14 @@ function MySchedule() {
                       <td className="whitespace-nowrap text-right tabular-nums">
                         {formatMinutes(minutesBetween(start, end))}
                       </td>
-                      <td className="text-right">
+                      <td className="whitespace-nowrap text-right">
+                        <button
+                          className="btn btn-ghost btn-xs gap-1 opacity-60 transition-opacity hover:opacity-100"
+                          onClick={() => setEditing(row)}
+                        >
+                          <Clock className="h-3 w-3" aria-hidden="true" />
+                          Hours
+                        </button>
                         <button
                           className="btn btn-ghost btn-xs opacity-60 transition-opacity hover:opacity-100"
                           onClick={() => void release(row)}
@@ -183,6 +336,50 @@ function MySchedule() {
           </div>
         )}
       </div>
+
+      {editing && (
+        <ShiftHoursDialog
+          title="Your hours"
+          description={
+            <>
+              {editing.shifts.title} is published{" "}
+              <span className="tabular-nums text-base-content">
+                {formatTimeRange(editing.shifts.starts_at, editing.shifts.ends_at)}
+              </span>
+              . Choose the hours you are actually working — anything inside that window.
+            </>
+          }
+          initialStart={toTimeInput(
+            new Date(editing.actual_start ?? editing.shifts.starts_at),
+          )}
+          initialEnd={toTimeInput(new Date(editing.actual_end ?? editing.shifts.ends_at))}
+          submitLabel="Save hours"
+          resetLabel={
+            editing.actual_start || editing.actual_end ? "Published hours" : undefined
+          }
+          onSubmit={(startTime, endTime) => saveHours(editing, startTime, endTime)}
+          onReset={
+            editing.actual_start || editing.actual_end
+              ? () => resetHours(editing)
+              : undefined
+          }
+          onClose={() => setEditing(null)}
+        />
+      )}
+
+      {bulkOpen && (
+        <ShiftHoursDialog
+          title="Your usual hours"
+          description={`Applied to all ${rows.length} shift${
+            rows.length === 1 ? "" : "s"
+          } you hold in ${format(month, "MMMM")}. Shifts these hours do not fit, and days already invoiced, are left as they are.`}
+          initialStart={usual.start}
+          initialEnd={usual.end}
+          submitLabel="Apply to month"
+          onSubmit={applyToMonth}
+          onClose={() => setBulkOpen(false)}
+        />
+      )}
     </div>
   );
 }

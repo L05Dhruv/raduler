@@ -78,7 +78,10 @@ create table public.shift_assignments (
   status       public.assignment_status not null default 'confirmed',
   claimed_at   timestamptz not null default now(),
   released_at  timestamptz,
-  -- Set by an admin when the worked time differed from the scheduled time.
+  -- The hours actually worked, when they differ from the published shift. Null means
+  -- "the shift as published". The holder sets these within the published window and an
+  -- admin may set anything, both via set_shift_hours() — see 0005_flexible_hours.sql.
+  -- Every hours and money expression below reads coalesce(actual, scheduled).
   actual_start timestamptz,
   actual_end   timestamptz,
   constraint assignment_actuals_order

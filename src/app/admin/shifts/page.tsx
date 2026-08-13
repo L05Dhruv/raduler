@@ -25,7 +25,8 @@ import {
   MAX_PATTERN_SHIFTS,
   type ShiftPattern,
 } from "@/lib/shiftPattern";
-import { formatCents, formatTimeRange, toDateInput } from "@/lib/format";
+import { coverageGapMinutes } from "@/lib/shiftHours";
+import { formatCents, formatMinutes, formatTimeRange, toDateInput } from "@/lib/format";
 import { USER_ROLES } from "@/types/db";
 
 export default function AdminShiftsPage() {
@@ -166,6 +167,24 @@ function AdminShifts() {
   };
 
   const shifts = shiftsQuery.data ?? [];
+
+  /**
+   * Holders may narrow their hours inside a published shift, which leaves part of the
+   * window unstaffed while the shift still reads `filled`. Nobody else can see that
+   * from the calendar, so it is counted here.
+   */
+  const partlyUncovered = shifts.filter((shift) => {
+    const held = shift.shift_assignments[0];
+    return (
+      held &&
+      coverageGapMinutes(
+        shift.starts_at,
+        shift.ends_at,
+        held.actual_start,
+        held.actual_end,
+      ) > 0
+    );
+  }).length;
 
   return (
     <div className="grid gap-6 xl:grid-cols-[26rem_1fr]">
@@ -322,6 +341,11 @@ function AdminShifts() {
           <span className="ml-2 text-sm font-normal text-base-content/60">
             {shifts.length} shifts
           </span>
+          {partlyUncovered > 0 && (
+            <span className="ml-2 text-sm font-normal text-warning">
+              · {partlyUncovered} partly uncovered
+            </span>
+          )}
         </h2>
         <div className="surface overflow-x-auto">
           <table className="table table-sm">
@@ -356,7 +380,16 @@ function AdminShifts() {
                 </tr>
               )}
               {shifts.map((shift) => {
-                const claimed = shift.shift_assignments.length > 0;
+                const held = shift.shift_assignments[0];
+                const claimed = Boolean(held);
+                const gap = held
+                  ? coverageGapMinutes(
+                      shift.starts_at,
+                      shift.ends_at,
+                      held.actual_start,
+                      held.actual_end,
+                    )
+                  : 0;
                 return (
                   <tr key={shift.id} className="border-base-300/40 transition-colors hover:bg-base-300/25">
                     <td className="whitespace-nowrap">
@@ -372,12 +405,23 @@ function AdminShifts() {
                         ? "person's rate"
                         : `${formatCents(shift.hourly_rate_cents)}/h`}
                     </td>
-                    <td>
+                    <td className="whitespace-nowrap">
                       <span
                         className={`badge badge-sm ${claimed ? "badge-success" : "badge-ghost"}`}
                       >
                         {claimed ? "filled" : shift.status}
                       </span>
+                      {held && gap > 0 && (
+                        <span
+                          className="badge badge-warning badge-sm ml-1 tabular-nums"
+                          title={`Working ${formatTimeRange(
+                            held.actual_start ?? shift.starts_at,
+                            held.actual_end ?? shift.ends_at,
+                          )} — ${formatMinutes(gap)} of the published shift is unstaffed`}
+                        >
+                          {formatMinutes(gap)} open
+                        </span>
+                      )}
                     </td>
                     <td className="text-right">
                       <button

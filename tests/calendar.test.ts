@@ -106,14 +106,30 @@ describe("timeOffOnDay", () => {
 describe("shiftAvailability", () => {
   it("marks a shift the viewer holds as theirs", () => {
     const s = shift({
-      shift_assignments: [{ id: "a1", profile_id: "me", status: "confirmed" }],
+      shift_assignments: [
+        {
+          id: "a1",
+          profile_id: "me",
+          status: "confirmed",
+          actual_start: null,
+          actual_end: null,
+        },
+      ],
     });
     expect(shiftAvailability(s, "me", "radiologist")).toBe("mine");
   });
 
   it("marks a shift someone else holds as taken", () => {
     const s = shift({
-      shift_assignments: [{ id: "a1", profile_id: "other", status: "confirmed" }],
+      shift_assignments: [
+        {
+          id: "a1",
+          profile_id: "other",
+          status: "confirmed",
+          actual_start: null,
+          actual_end: null,
+        },
+      ],
     });
     expect(shiftAvailability(s, "me", "radiologist")).toBe("taken");
   });
@@ -129,4 +145,5 @@ describe("shiftAvailability", () => {
   it("reports open when the role matches and nobody holds it", () => {
     expect(shiftAvailability(shift({}), "me", "radiologist")).toBe("open");
   });
+
 });
