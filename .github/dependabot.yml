@@ -3,9 +3,25 @@ updates:
   - package-ecosystem: npm
     directory: /
     schedule:
-      interval: weekly
+      # Monthly is enough for a prototype; weekly produced six PRs on day one.
+      interval: monthly
     open-pull-requests-limit: 5
+    groups:
+      # Minor and patch bumps arrive as one reviewable PR. Majors stay separate on
+      # purpose — a TypeScript or @types/node major deserves its own build and its
+      # own decision, not a batch merge.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
   - package-ecosystem: github-actions
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    groups:
+      # The Pages actions have to move together, so all workflow updates land in one
+      # PR rather than four that each half-update the pipeline.
+      actions:
+        patterns:
+          - "*"

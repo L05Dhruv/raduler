@@ -1,0 +1,48 @@
+name: CI
+
+# Pull requests had no checks at all before this: deploy.yml only fires on push to
+# main, so a dependency bump's first real verification would have been production.
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      # No `version:` input — the action reads `packageManager` from package.json, and
+      # supplying both is an error.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm lint
+
+      - run: pnpm test:run
+
+      # Deliberately built without the Supabase variables. Dependabot-triggered runs
+      # read a separate variable store and would see them empty anyway, and the values
+      # only ever land in strings — nothing about compilation, types or tests depends
+      # on them. What this proves is that the code still builds.
+      - name: Build static export
+        env:
+          NEXT_PUBLIC_BASE_PATH: /raduler
+        run: pnpm build
+
+      - name: Audit dependencies
+        run: pnpm audit --audit-level high
+        continue-on-error: true
