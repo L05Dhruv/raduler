@@ -1,3 +1,5 @@
+import { DISPLAY_LOCALE } from "@/lib/format";
+
 /**
  * Time-zone primitives.
  *
@@ -57,16 +59,15 @@ export function supportedTimezones(): string[] {
     }
   }
   return [
-    "America/St_Johns",
-    "America/Halifax",
-    "America/Toronto",
-    "America/Winnipeg",
-    "America/Edmonton",
-    "America/Vancouver",
     "America/New_York",
     "America/Chicago",
     "America/Denver",
+    "America/Phoenix",
     "America/Los_Angeles",
+    "America/Anchorage",
+    "Pacific/Honolulu",
+    "America/Toronto",
+    "America/Vancouver",
     "Europe/London",
     "Europe/Paris",
     "Asia/Dubai",
@@ -85,6 +86,9 @@ export function supportedTimezones(): string[] {
  * ICU versions and would silently push every midnight calculation to the wrong day.
  */
 function partsInZone(instant: Date, zone: string) {
+  // Deliberately NOT the display locale. This is parsing machinery — the numbers read back
+  // here drive every day bucket and wall-clock conversion — so it stays pinned to one locale
+  // whose numeric output is known, rather than following whatever the practice reads in.
   const formatter = new Intl.DateTimeFormat("en-CA", {
     timeZone: zone,
     hourCycle: "h23",
@@ -209,7 +213,7 @@ const TIME_FORMATTERS = new Map<string, Intl.DateTimeFormat>();
 function timeFormatter(zone: string): Intl.DateTimeFormat {
   let cached = TIME_FORMATTERS.get(zone);
   if (!cached) {
-    cached = new Intl.DateTimeFormat("en-CA", {
+    cached = new Intl.DateTimeFormat(DISPLAY_LOCALE, {
       timeZone: zone,
       hour: "numeric",
       minute: "2-digit",
@@ -240,7 +244,7 @@ export function formatTimeRangeInZone(
  */
 export function zoneAbbreviation(zone: string, instant: Date = new Date()): string {
   try {
-    const parts = new Intl.DateTimeFormat("en-CA", {
+    const parts = new Intl.DateTimeFormat(DISPLAY_LOCALE, {
       timeZone: zone,
       timeZoneName: "short",
     }).formatToParts(instant);

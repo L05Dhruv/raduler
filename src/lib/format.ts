@@ -26,9 +26,22 @@ export function toHours(minutes: number): number {
   return Math.round((minutes / 60) * 100) / 100;
 }
 
-const currency = new Intl.NumberFormat("en-CA", {
+/**
+ * The practice is in Fort Myers, Florida, so money is US dollars and reads in US
+ * conventions.
+ *
+ * The locale is not incidental to the currency: `Intl.NumberFormat("en-CA", …)` renders USD
+ * as "US$1,234.56", because Canadian English disambiguates a dollar that is not its own.
+ * Pairing en-US with USD is what produces the plain "$1,234.56" a US practice expects.
+ *
+ * Exported because `src/lib/timezone.ts` formats times for the same readers and should not
+ * hold a second opinion about who they are.
+ */
+export const DISPLAY_LOCALE = "en-US";
+
+const currency = new Intl.NumberFormat(DISPLAY_LOCALE, {
   style: "currency",
-  currency: "CAD",
+  currency: "USD",
 });
 
 export function formatCents(cents: number): string {

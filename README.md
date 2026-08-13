@@ -50,7 +50,8 @@ the SQL editor run, in order:
 3. `supabase/migrations/0006_timezones.sql` — time zones, and the reporting-period anchor
 4. `supabase/migrations/0007_person_rates.sql` — one rate per person; drops the shift rate
 5. `supabase/migrations/0008_practice_settings.sql` — practice configuration, in a table
-6. `supabase/seed.sql` — four teams and eight weeks of open shifts (optional)
+6. `supabase/migrations/0009_practice_location.sql` — the practice's own location
+7. `supabase/seed.sql` — four teams and eight weeks of open shifts (optional)
 
 (`0002`–`0004` fix privileges on projects created before those defects were found. `0001`
 was corrected in place, so a fresh install skips them — see the header of each file.)
@@ -74,7 +75,9 @@ rather than the practice's.
 
 ```sql
 update private.practice_settings
-set timezone = 'America/New_York', allowed_email_domains = 'yourpractice.com'
+set timezone              = 'America/New_York',
+    allowed_email_domains = 'yourpractice.com',
+    default_location      = 'Fort Myers, FL'
 where id;
 ```
 
@@ -90,8 +93,11 @@ permission denied to set parameter` just as the CLI does. `0008` moved them into
 `private.practice_settings`, one row, invisible to PostgREST. The old parameters are still
 read as a fallback, so a self-hosted project with a real superuser keeps working.
 
-An administrator signed into the app changes them through `set_practice_settings()`, which
-checks the caller and writes an audit row. From the SQL editor use the `update` above — a
+`default_location` pre-fills the location on a published shift; it is a default rather than
+a constraint, since `shifts.location` stays free text and one practice reads in several rooms.
+
+An administrator signed into the app changes all three through `set_practice_settings()`,
+which checks the caller and writes an audit row. From the SQL editor use the `update` above — a
 direct connection has no `auth.uid()`, so the RPC's admin check would refuse it.
 
 ### 2. Local development
@@ -179,6 +185,13 @@ It cannot reach PostgREST, JWT issuance or Supabase's own `auth` implementation.
 means the SQL is right, not that the round trip is.
 
 ## Notes on the design
+
+**Money is US dollars.** `formatCents` pairs `en-US` with `USD`, which matters more than it
+looks: `Intl.NumberFormat("en-CA", { currency: "USD" })` renders "US$1,234.56", because
+Canadian English disambiguates a dollar that is not its own. The same locale drives the time
+formatter, so a shift reads "1:00 PM" rather than "1:00 p.m.". The two `Intl` calls inside
+`timezone.ts` that *parse* rather than present are deliberately pinned to a fixed locale and
+do not follow it — their numeric output drives every day bucket in the app.
 
 **Money is computed in SQL.** `hours_summary()` and `create_invoice()` derive hours and
 amounts from the same expression, so a report and an invoice for the same period cannot

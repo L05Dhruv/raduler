@@ -37,6 +37,7 @@ const INSTALL_ORDER = [
   "0006_timezones.sql",
   "0007_person_rates.sql",
   "0008_practice_settings.sql",
+  "0009_practice_location.sql",
 ];
 
 /**
@@ -1033,7 +1034,7 @@ describe("practice settings, without a superuser", () => {
   it("lets an administrator set the zone through the RPC", async () => {
     await as(CAROL);
     const applied = await row<{ set_practice_settings: string }>(
-      `select public.set_practice_settings('America/New_York', 'practice.test')`,
+      `select public.set_practice_settings('America/New_York', 'practice.test', 'Fort Myers, FL')`,
     );
     expect(applied.set_practice_settings).toBe("America/New_York");
   });
@@ -1051,7 +1052,7 @@ describe("practice settings, without a superuser", () => {
   it("refuses a zone Postgres does not recognise", async () => {
     await as(CAROL);
     const err = await refusal(
-      `select public.set_practice_settings('Mars/Olympus_Mons', null)`,
+      `select public.set_practice_settings('Mars/Olympus_Mons', null, null)`,
     );
     expect(err).toMatch(/Unknown time zone/);
   });
@@ -1059,7 +1060,7 @@ describe("practice settings, without a superuser", () => {
   it("refuses a non-administrator", async () => {
     await as(ALICE);
     const err = await refusal(
-      `select public.set_practice_settings('America/Toronto', null)`,
+      `select public.set_practice_settings('America/Toronto', null, null)`,
     );
     expect(err).toMatch(/Administrator access required/);
   });
@@ -1087,6 +1088,51 @@ describe("practice settings, without a superuser", () => {
       "insert into private.practice_settings (id) values (false)",
     );
     expect(err).toBeTruthy();
+  });
+
+  it("stores a default location for the publish form", async () => {
+    const location = await row<{ practice_default_location: string }>(
+      "select public.practice_default_location()",
+    );
+    expect(location.practice_default_location).toBe("Fort Myers, FL");
+  });
+
+  it("reports no location rather than an empty string when unset", async () => {
+    await as(CAROL);
+    await db.exec(`select public.set_practice_settings('America/New_York', 'practice.test', '   ')`);
+    const cleared = await row<{ practice_default_location: string | null }>(
+      "select public.practice_default_location()",
+    );
+    // Whitespace is trimmed to null, so the form falls back to its own placeholder instead
+    // of pre-filling a blank that looks deliberate.
+    expect(cleared.practice_default_location).toBeNull();
+
+    await db.exec(
+      `select public.set_practice_settings('America/New_York', 'practice.test', 'Fort Myers, FL')`,
+    );
+  });
+
+  it("leaves only the three-argument settings RPC callable", async () => {
+    // 0009 replaced the two-argument form. Both existing would let a caller reach the one
+    // that silently ignores the location.
+    const shapes = await db.query<{ args: string }>(`
+      select pg_get_function_identity_arguments(p.oid) as args
+      from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public' and p.proname = 'set_practice_settings'
+    `);
+    expect(shapes.rows).toHaveLength(1);
+    expect(shapes.rows[0].args).toBe(
+      "p_timezone text, p_allowed_email_domains text, p_default_location text",
+    );
+  });
+
+  it("keeps the location RPC away from anon", async () => {
+    const priv = await row<{ authed: boolean; anon: boolean }>(`
+      select has_function_privilege('authenticated','public.practice_default_location()','EXECUTE') as authed,
+             has_function_privilege('anon','public.practice_default_location()','EXECUTE') as anon
+    `);
+    expect(priv.authed).toBe(true);
+    expect(priv.anon).toBe(false);
   });
 
   it("enforces the signup allowlist that was previously inert", async () => {

@@ -20,6 +20,7 @@ import {
   listShifts,
 } from "@/lib/repositories/shifts";
 import { listTeams } from "@/lib/repositories/teams";
+import { getPracticeDefaultLocation } from "@/lib/repositories/settings";
 import {
   expandPattern,
   MAX_PATTERN_SHIFTS,
@@ -82,6 +83,9 @@ function AdminShifts() {
   );
 
   const teamsQuery = useSWR("teams", listTeams);
+  // The practice's own location, pre-filling the common case rather than constraining it.
+  const locationQuery = useSWR("practice-location", getPracticeDefaultLocation);
+  const defaultLocation = locationQuery.data ?? "";
   const shiftsQuery = useSWR(["admin-shifts", toDateInput(range.start)], () =>
     listShifts(range.start, range.end),
   );
@@ -116,7 +120,7 @@ function AdminShifts() {
     if (!v.from || !v.to) return [];
     return expandPattern({
       title: v.title || "Untitled shift",
-      location: v.location ?? "",
+      location: (v.location ?? "").trim() || defaultLocation,
       modality: v.modality ? v.modality : null,
       team_id: v.team_id || null,
       required_role: v.required_role ?? "radiologist",
@@ -128,12 +132,12 @@ function AdminShifts() {
       weekdays,
       timezone: rosterZone,
     } satisfies ShiftPattern);
-  }, [v, weekdays, rosterZone]);
+  }, [v, weekdays, rosterZone, defaultLocation]);
 
   const onSubmit = async (values: FormValues) => {
     const rows = expandPattern({
       title: values.title,
-      location: values.location,
+      location: values.location.trim() || defaultLocation,
       modality: values.modality || null,
       team_id: values.team_id || null,
       required_role: values.required_role,
@@ -222,9 +226,14 @@ function AdminShifts() {
               <Field label="Location">
                 <input
                   className="input input-bordered w-full"
-                  placeholder="Main Campus"
+                  placeholder={defaultLocation || "Main Campus"}
                   {...register("location")}
                 />
+                {defaultLocation && (
+                  <span className="mt-1 block text-xs text-base-content/45">
+                    Blank uses {defaultLocation}.
+                  </span>
+                )}
               </Field>
               <Field label="Modality">
                 <input

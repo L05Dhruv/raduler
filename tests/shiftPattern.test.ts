@@ -132,7 +132,7 @@ describe("summaryToCsv", () => {
 
   it("writes a header and one row per person", () => {
     const lines = summaryToCsv([row()]).split("\r\n");
-    expect(lines[0]).toBe("Name,Role,Shifts,Hours,Earnings (CAD)");
+    expect(lines[0]).toBe("Name,Role,Shifts,Hours,Earnings (USD)");
     expect(lines[1]).toBe("Dana Patel,radiologist,3,24,6240.00");
   });
 

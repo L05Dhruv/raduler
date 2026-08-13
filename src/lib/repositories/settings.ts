@@ -18,3 +18,15 @@ export async function getPracticeTimezone(): Promise<string> {
   return (data as string | null) ?? "UTC";
 }
 
+/**
+ * Where the practice is, used to pre-fill a published shift's location. Null when nobody has
+ * configured one, in which case the form falls back to its own placeholder.
+ *
+ * A default, not a constraint: `shifts.location` stays free text, because one practice reads
+ * in several rooms.
+ */
+export async function getPracticeDefaultLocation(): Promise<string | null> {
+  const { data, error } = await getSupabase().rpc("practice_default_location");
+  if (error) throw new Error(error.message);
+  return (data as string | null) ?? null;
+}

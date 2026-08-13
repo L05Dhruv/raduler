@@ -21,7 +21,7 @@ export async function getHoursSummary(
 }
 
 export function summaryToCsv(rows: HoursSummaryRow[]): string {
-  const header = ["Name", "Role", "Shifts", "Hours", "Earnings (CAD)"];
+  const header = ["Name", "Role", "Shifts", "Hours", "Earnings (USD)"];
   const body = rows.map((r) => [
     r.full_name,
     r.role,
