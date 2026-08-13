@@ -136,3 +136,10 @@ millisecond cannot both win.
 **Time zones.** Recurring shifts are built from local wall-clock times, so a pattern
 that crosses a daylight-saving boundary keeps its 08:00 start instead of drifting; there
 is a test for it.
+
+## Licence
+
+Proprietary — all rights reserved. The repository is public only because GitHub Pages
+requires it on the free plan; that visibility grants no right to use the code. Use
+requires prior written authorization from [L05Dhruv](https://github.com/L05Dhruv). See
+[LICENSE](./LICENSE).
