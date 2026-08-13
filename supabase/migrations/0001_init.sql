@@ -282,6 +282,19 @@ create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function private.handle_new_user();
 
+-- RLS policy expressions run with the privileges of the *querying* user: SECURITY
+-- DEFINER governs what the body may touch, not who may invoke it. Without USAGE on
+-- this schema and EXECUTE on is_admin(), every admin policy below fails with
+-- "permission denied for schema private" as soon as a real user signs in.
+--
+-- This is not a loosening: is_admin() takes no arguments and reports only on the
+-- caller, and `private` is not in Supabase's exposed-schemas list, so PostgREST
+-- cannot route to it. anon is never granted anything here.
+grant usage on schema private to authenticated;
+grant execute on function private.is_admin() to authenticated;
+grant execute on function private.audit_trigger() to authenticated;
+grant execute on function private.touch_updated_at() to authenticated;
+
 create trigger profiles_touch_updated_at
   before update on public.profiles
   for each row execute function private.touch_updated_at();
@@ -694,6 +707,20 @@ $$;
 
 -- Functions are callable only by signed-in users; each one re-checks authorisation
 -- internally rather than trusting the grant alone.
+--
+-- The revoke is not redundant: PostgreSQL grants EXECUTE to PUBLIC on every new
+-- function, and the blanket revoke in the privilege baseline above ran before these
+-- functions existed. Without this, an anonymous request reaches the inside of an
+-- admin function before being turned away.
+revoke execute on function public.claim_shift(uuid) from public, anon;
+revoke execute on function public.release_shift(uuid) from public, anon;
+revoke execute on function public.hours_summary(date, date) from public, anon;
+revoke execute on function public.create_invoice(uuid, date, date) from public, anon;
+revoke execute on function public.decide_time_off(uuid, boolean) from public, anon;
+revoke execute on function public.admin_update_profile(uuid, public.user_role, integer, boolean)
+  from public, anon;
+revoke execute on function private.write_audit(text, text, text, jsonb) from public, anon;
+
 grant execute on function public.claim_shift(uuid) to authenticated;
 grant execute on function public.release_shift(uuid) to authenticated;
 grant execute on function public.admin_update_profile(uuid, public.user_role, integer, boolean) to authenticated;

@@ -137,10 +137,41 @@ work changes that:
 Nothing in the current data model needs patient data. Keep it that way for as long as
 possible — the compliance burden is paid on the *first* identifying field, not the tenth.
 
+### Maintaining the baseline
+
+Supabase's default privileges grant `anon` and `authenticated` access to newly created
+objects in `public`. `0001` revokes those grants, but only for the objects that existed
+when it ran. **Anything added later — a table via the dashboard editor, a new RPC —
+starts open and must be revoked explicitly.** Two defects of exactly this shape were
+found by probing the live project and fixed in
+`supabase/migrations/0002_fix_function_privileges.sql`:
+
+- Every RPC kept PostgreSQL's default `EXECUTE` grant to `PUBLIC`, because the blanket
+  revoke ran earlier in the file than the functions it was meant to cover. Nothing was
+  exploitable — each function re-checks the caller — but anonymous requests reached the
+  inside of admin functions before being refused.
+- `authenticated` held neither `USAGE` on schema `private` nor `EXECUTE` on
+  `private.is_admin()`. Policy expressions run with the querying user's privileges, so
+  every admin policy would have failed outright for signed-in users.
+
+When adding a table: `revoke all on public.<table> from anon, authenticated;` then grant
+back only what is needed, and enable RLS before inserting a row.
+
 ## Verifying the boundary
 
-The claims above are only worth what the tests show. Sign in as a regular user, open
-the browser console, and confirm each of these:
+Start with the anonymous checks — no session required, and they confirm the deny-by-default
+grants are intact. Every one must be refused:
+
+```bash
+# Expect 42501 "permission denied" on all of them, not data and not a 404.
+for t in shifts profiles shift_assignments time_off invoices audit_log teams; do
+  curl -sS "$SUPABASE_URL/rest/v1/$t?select=*&limit=1" -H "apikey: $ANON_KEY"
+done
+```
+
+A `404 PGRST205` means the migration has not run. Data means the grants are wrong.
+
+Then sign in as a regular user, open the browser console, and confirm each of these:
 
 ```js
 // One row — your own — not the whole practice.
