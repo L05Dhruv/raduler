@@ -335,7 +335,7 @@
   z-index: 0;
   pointer-events: none;
   background: radial-gradient(
-    34rem 34rem at var(--glow-x) var(--glow-y),
+    28rem 28rem at var(--glow-x) var(--glow-y),
     color-mix(in oklch, var(--color-primary) 15%, transparent),
     transparent 68%
   );
@@ -345,7 +345,7 @@
    as a smudge rather than a light. */
 [data-theme="raduler-light"] .cursor-glow {
   background: radial-gradient(
-    34rem 34rem at var(--glow-x) var(--glow-y),
+    28rem 28rem at var(--glow-x) var(--glow-y),
     color-mix(in oklch, var(--color-primary) 9%, transparent),
     transparent 68%
   );
