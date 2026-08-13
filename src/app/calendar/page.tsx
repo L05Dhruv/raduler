@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import useSWR from "swr";
 import { addMonths, format, isSameMonth, subMonths } from "date-fns";
-import { CalendarX2, ChevronLeft, ChevronRight, RefreshCw } from "lucide-react";
+import { CalendarX2, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
 import { RequireAuth } from "@/components/auth/RequireAuth";
 import { AppShell } from "@/components/AppShell";
 import { PageTransition, Reveal } from "@/components/PageTransition";
@@ -16,6 +16,7 @@ import { listShifts, claimShift, releaseShift } from "@/lib/repositories/shifts"
 import { listTimeOff } from "@/lib/repositories/timeOff";
 import {
   buildMonthGrid,
+  chunkIntoWeeks,
   groupShiftsByDay,
   shiftAvailability,
   timeOffOnDay,
@@ -27,7 +28,7 @@ import {
   todayKeyInZone,
   zoneAbbreviation,
 } from "@/lib/timezone";
-import type { ShiftWithAssignment } from "@/types/db";
+import type { ShiftWithAssignment, TimeOff } from "@/types/db";
 
 export default function CalendarPage() {
   return (
@@ -51,6 +52,7 @@ function Calendar() {
   const [busyShiftId, setBusyShiftId] = useState<string | null>(null);
   const [justClaimedId, setJustClaimedId] = useState<string | null>(null);
   const [onlyEligible, setOnlyEligible] = useState(true);
+  const [openDayKey, setOpenDayKey] = useState<string | null>(null);
 
   // The zone decides both the query bounds and which square a shift lands in, so it is
   // part of the grid and part of the cache key. Switching zones re-buckets rather than
@@ -71,6 +73,19 @@ function Calendar() {
     [shifts, displayZone],
   );
   const todayKey = todayKeyInZone(displayZone);
+
+  // Weeks rather than one flat grid: the panel for an expanded day is drawn between rows.
+  const weeks = useMemo(() => chunkIntoWeeks(grid.days), [grid.days]);
+
+  /**
+   * Derived rather than reset in an effect. Changing month or zone rebuilds the grid, and
+   * a key left over from the month before would either open nothing or, worse, open the
+   * same date in a different month.
+   */
+  const expandedKey =
+    openDayKey && grid.days.some((day) => toDateInput(day) === openDayKey)
+      ? openDayKey
+      : null;
 
   const act = async (shift: ShiftWithAssignment, action: "claim" | "release") => {
     setBusyShiftId(shift.id);
@@ -187,83 +202,78 @@ function Calendar() {
           />
         ) : (
           <Reveal mode="in">
-            <div className="grid min-w-[52rem] grid-cols-7 gap-px">
-              {WEEKDAYS.map((d) => (
-                <div
-                  key={d}
-                  className="pb-2 text-center text-[11px] font-medium uppercase tracking-wider text-base-content/45"
-                >
-                  {d}
-                </div>
-              ))}
-
-              {grid.days.map((day) => {
-                const key = toDateInput(day);
-                const dayShifts = shiftsByDay.get(key) ?? [];
-                const away = timeOffOnDay(day, timeOffQuery.data ?? []);
-                const outsideMonth = !isSameMonth(day, month);
-                const approvedAway = away.some((a) => a.status === "approved");
-                // "Today" is a question about a calendar, so it has to be asked in the
-                // zone the calendar is drawn in.
-                const today = key === todayKey;
-
-                return (
+            <div className="min-w-[52rem] space-y-px">
+              <div className="grid grid-cols-7 gap-px">
+                {WEEKDAYS.map((d) => (
                   <div
-                    key={key}
-                    className={`day-cell rounded-field border p-1.5 transition-colors ${
-                      outsideMonth
-                        ? "border-transparent bg-base-200/40"
-                        : "border-base-300/40 bg-base-100"
-                    } ${today ? "ring-1 ring-primary/50" : ""} ${
-                      approvedAway ? "bg-warning/5" : ""
-                    }`}
+                    key={d}
+                    className="pb-2 text-center text-[11px] font-medium uppercase tracking-wider text-base-content/45"
                   >
-                    <div className="mb-1.5 flex items-center justify-between">
-                      <span
-                        className={`grid h-5 min-w-5 place-items-center rounded-full px-1 text-xs font-medium ${
-                          today
-                            ? "bg-primary text-primary-content"
-                            : outsideMonth
-                              ? "text-base-content/30"
-                              : "text-base-content/70"
-                        }`}
-                      >
-                        {format(day, "d")}
-                      </span>
-                      {away.length > 0 && (
-                        <span
-                          className={`badge badge-xs ${
-                            approvedAway ? "badge-warning" : "badge-ghost"
-                          }`}
-                          title={away.map((a) => `${a.kind} (${a.status})`).join(", ")}
-                        >
-                          {approvedAway ? "Away" : "Pending"}
-                        </span>
-                      )}
-                    </div>
+                    {d}
+                  </div>
+                ))}
+              </div>
 
-                    <div className="space-y-1">
-                      {dayShifts.map((shift) => {
-                        const state = shiftAvailability(
-                          shift,
-                          profile?.id ?? null,
-                          profile?.role ?? null,
+              {weeks.map((week) => {
+                const openDay = week.find((day) => toDateInput(day) === expandedKey);
+                return (
+                  <div key={toDateInput(week[0])} className="space-y-px">
+                    <div className="grid grid-cols-7 gap-px">
+                      {week.map((day) => {
+                        const key = toDateInput(day);
+                        const dayShifts = (shiftsByDay.get(key) ?? []).filter(
+                          (shift) =>
+                            !onlyEligible ||
+                            shiftAvailability(
+                              shift,
+                              profile?.id ?? null,
+                              profile?.role ?? null,
+                            ) !== "ineligible",
                         );
-                        if (onlyEligible && state === "ineligible") return null;
                         return (
-                          <ShiftChip
-                            key={shift.id}
-                            shift={shift}
-                            state={state}
-                            zone={displayZone}
-                            busy={busyShiftId === shift.id}
-                            justClaimed={justClaimedId === shift.id}
-                            onClaim={() => void act(shift, "claim")}
-                            onRelease={() => void act(shift, "release")}
+                          <DayCell
+                            key={key}
+                            day={day}
+                            dayKey={key}
+                            shifts={dayShifts}
+                            away={timeOffOnDay(day, timeOffQuery.data ?? [])}
+                            outsideMonth={!isSameMonth(day, month)}
+                            today={key === todayKey}
+                            expanded={key === expandedKey}
+                            viewerId={profile?.id ?? null}
+                            viewerRole={profile?.role ?? null}
+                            onToggle={() =>
+                              setOpenDayKey((current) => (current === key ? null : key))
+                            }
                           />
                         );
                       })}
                     </div>
+
+                    {openDay && (
+                      <DayDetail
+                        day={openDay}
+                        dayKey={toDateInput(openDay)}
+                        shifts={(shiftsByDay.get(toDateInput(openDay)) ?? []).filter(
+                          (shift) =>
+                            !onlyEligible ||
+                            shiftAvailability(
+                              shift,
+                              profile?.id ?? null,
+                              profile?.role ?? null,
+                            ) !== "ineligible",
+                        )}
+                        away={timeOffOnDay(openDay, timeOffQuery.data ?? [])}
+                        zone={displayZone}
+                        viewerId={profile?.id ?? null}
+                        viewerRole={profile?.role ?? null}
+                        busyShiftId={busyShiftId}
+                        justClaimedId={justClaimedId}
+                        onClaim={(shift) => void act(shift, "claim")}
+                        onRelease={(shift) => void act(shift, "release")}
+                        onClose={() => setOpenDayKey(null)}
+                      />
+                    )}
                   </div>
                 );
               })}
@@ -323,64 +333,241 @@ const CHIP_STYLES: Record<ShiftAvailability, string> = {
   taken: "bg-base-300/40 border-base-300 opacity-70",
   ineligible: "border-base-300/50 opacity-45",
 };
-
-function ShiftChip({
-  shift,
-  state,
-  zone,
-  busy,
-  justClaimed,
-  onClaim,
-  onRelease,
+/**
+ * One calendar square, at a fixed height whatever the day holds.
+ *
+ * The month grid used to stack every shift inline, so a Tuesday with five of them made its
+ * whole week twice as tall as the others and the calendar lost the even rhythm that makes a
+ * month readable at a glance. The square now shows at most two titles and a count; the rest
+ * lives in the panel that expands beneath the week, which costs no height until asked for.
+ *
+ * It is a button only when there is something to open — otherwise a month of empty squares
+ * would add forty-two stops to the tab order for nothing.
+ */
+function DayCell({
+  day,
+  dayKey,
+  shifts,
+  away,
+  outsideMonth,
+  today,
+  expanded,
+  viewerId,
+  viewerRole,
+  onToggle,
 }: {
-  shift: ShiftWithAssignment;
-  state: ShiftAvailability;
-  zone: string;
-  busy: boolean;
-  justClaimed: boolean;
-  onClaim: () => void;
-  onRelease: () => void;
+  day: Date;
+  dayKey: string;
+  shifts: ShiftWithAssignment[];
+  away: TimeOff[];
+  outsideMonth: boolean;
+  today: boolean;
+  expanded: boolean;
+  viewerId: string | null;
+  viewerRole: string | null;
+  onToggle: () => void;
 }) {
-  const interactive = state === "open" || state === "mine";
+  const approvedAway = away.some((a) => a.status === "approved");
+  const interactive = shifts.length > 0 || away.length > 0;
+  const mineCount = shifts.filter(
+    (s) => shiftAvailability(s, viewerId, viewerRole) === "mine",
+  ).length;
+  const openCount = shifts.filter(
+    (s) => shiftAvailability(s, viewerId, viewerRole) === "open",
+  ).length;
 
-  return (
-    <div
-      className={`group rounded-field border p-1.5 text-left text-[11px] ${
-        CHIP_STYLES[state]
-      } ${interactive ? "lift" : ""} ${justClaimed ? "claimed" : ""}`}
-    >
-      <div className="truncate font-medium text-base-content" title={shift.title}>
-        {shift.title}
+  const shown = shifts.slice(0, 2);
+  const hidden = shifts.length - shown.length;
+
+  const body = (
+    <>
+      <div className="mb-1 flex items-center justify-between">
+        <span
+          className={`grid h-5 min-w-5 place-items-center rounded-full px-1 text-xs font-medium ${
+            today
+              ? "bg-primary text-primary-content"
+              : outsideMonth
+                ? "text-base-content/30"
+                : "text-base-content/70"
+          }`}
+        >
+          {format(day, "d")}
+        </span>
+        {away.length > 0 && (
+          <span
+            className={`badge badge-xs ${approvedAway ? "badge-warning" : "badge-ghost"}`}
+          >
+            {approvedAway ? "Away" : "Pending"}
+          </span>
+        )}
       </div>
-      <div className="tabular-nums text-base-content/65">
-        {formatTimeRangeInZone(shift.starts_at, shift.ends_at, zone)}
+
+      <div className="space-y-0.5">
+        {shown.map((shift) => (
+          <span
+            key={shift.id}
+            className={`block truncate rounded-[3px] border px-1 py-px text-[10px] text-base-content ${
+              CHIP_STYLES[shiftAvailability(shift, viewerId, viewerRole)]
+            }`}
+          >
+            {shift.title}
+          </span>
+        ))}
       </div>
-      {shift.location && (
-        <div className="truncate text-base-content/50" title={shift.location}>
-          {shift.location}
+
+      {shifts.length > 0 && (
+        <div className="mt-1 flex items-center gap-1.5 text-[10px] text-base-content/50">
+          {hidden > 0 && <span>+{hidden} more</span>}
+          {openCount > 0 && <span className="text-primary">{openCount} open</span>}
+          {mineCount > 0 && <span className="text-success">{mineCount} yours</span>}
         </div>
       )}
+    </>
+  );
 
-      {interactive && (
+  const shell = `day-cell rounded-field border p-1.5 text-left transition-colors ${
+    outsideMonth ? "border-transparent bg-base-200/40" : "border-base-300/40 bg-base-100"
+  } ${today ? "ring-1 ring-primary/50" : ""} ${approvedAway ? "bg-warning/5" : ""} ${
+    expanded ? "border-primary/50 bg-base-300/25" : ""
+  }`;
+
+  if (!interactive) return <div className={shell}>{body}</div>;
+
+  return (
+    <button
+      type="button"
+      id={`day-${dayKey}`}
+      aria-expanded={expanded}
+      aria-controls={`day-panel-${dayKey}`}
+      onClick={onToggle}
+      className={`${shell} w-full cursor-pointer hover:border-base-300 hover:bg-base-300/30`}
+    >
+      {body}
+    </button>
+  );
+}
+
+/**
+ * The expanded day. Full width beneath its own week, so opening one never changes the size
+ * of a square or moves the days around it — only what sits below them.
+ *
+ * Claim and release live here rather than in the square. Nesting a button inside a button
+ * is invalid, and a target that small was never a good place for the one irreversible
+ * action on this page.
+ */
+function DayDetail({
+  day,
+  dayKey,
+  shifts,
+  away,
+  zone,
+  viewerId,
+  viewerRole,
+  busyShiftId,
+  justClaimedId,
+  onClaim,
+  onRelease,
+  onClose,
+}: {
+  day: Date;
+  dayKey: string;
+  shifts: ShiftWithAssignment[];
+  away: TimeOff[];
+  zone: string;
+  viewerId: string | null;
+  viewerRole: string | null;
+  busyShiftId: string | null;
+  justClaimedId: string | null;
+  onClaim: (shift: ShiftWithAssignment) => void;
+  onRelease: (shift: ShiftWithAssignment) => void;
+  onClose: () => void;
+}) {
+  return (
+    <section
+      id={`day-panel-${dayKey}`}
+      role="region"
+      aria-labelledby={`day-${dayKey}`}
+      className="day-detail surface rounded-field border-primary/30 p-3"
+    >
+      <div className="mb-2 flex items-center gap-2">
+        <h3 className="text-sm font-semibold">{format(day, "EEEE d MMMM")}</h3>
+        {away.map((a) => (
+          <span
+            key={a.id}
+            className={`badge badge-sm ${
+              a.status === "approved" ? "badge-warning" : "badge-ghost"
+            }`}
+          >
+            {a.kind} ({a.status})
+          </span>
+        ))}
         <button
-          className={`btn btn-xs mt-1.5 w-full ${
-            state === "open" ? "btn-primary" : "btn-ghost border-success/30"
-          }`}
-          disabled={busy}
-          onClick={state === "open" ? onClaim : onRelease}
+          type="button"
+          className="btn btn-ghost btn-xs btn-square ml-auto"
+          aria-label="Collapse day"
+          onClick={onClose}
         >
-          {busy ? (
-            <span className="loading loading-spinner loading-xs" />
-          ) : state === "open" ? (
-            "Claim"
-          ) : (
-            "Release"
-          )}
+          <X className="h-3.5 w-3.5" />
         </button>
+      </div>
+
+      {shifts.length === 0 ? (
+        <p className="text-sm text-base-content/55">Nothing scheduled on this day.</p>
+      ) : (
+        <ul className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+          {shifts.map((shift) => {
+            const state = shiftAvailability(shift, viewerId, viewerRole);
+            const interactive = state === "open" || state === "mine";
+            return (
+              <li
+                key={shift.id}
+                className={`flex items-center gap-2 rounded-field border p-2 ${
+                  CHIP_STYLES[state]
+                } ${justClaimedId === shift.id ? "claimed" : ""}`}
+              >
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-medium">{shift.title}</p>
+                  <p className="tabular-nums text-xs text-base-content/65">
+                    {formatTimeRangeInZone(shift.starts_at, shift.ends_at, zone)}
+                  </p>
+                  {shift.location && (
+                    <p className="truncate text-xs text-base-content/45">
+                      {shift.location}
+                    </p>
+                  )}
+                  {shift.modality && (
+                    <p className="text-xs text-base-content/45">{shift.modality}</p>
+                  )}
+                </div>
+
+                {interactive ? (
+                  <button
+                    className={`btn btn-xs shrink-0 ${
+                      state === "open" ? "btn-primary" : "btn-ghost border-success/30"
+                    }`}
+                    disabled={busyShiftId === shift.id}
+                    onClick={() =>
+                      state === "open" ? onClaim(shift) : onRelease(shift)
+                    }
+                  >
+                    {busyShiftId === shift.id ? (
+                      <span className="loading loading-spinner loading-xs" />
+                    ) : state === "open" ? (
+                      "Claim"
+                    ) : (
+                      "Release"
+                    )}
+                  </button>
+                ) : (
+                  <span className="shrink-0 text-xs text-base-content/40">
+                    {state === "taken" ? "Filled" : "Other role"}
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ul>
       )}
-      {state === "taken" && (
-        <div className="mt-1 text-base-content/40">Filled</div>
-      )}
-    </div>
+    </section>
   );
 }

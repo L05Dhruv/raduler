@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildMonthGrid,
+  chunkIntoWeeks,
   groupShiftsByDay,
   shiftAvailability,
   timeOffOnDay,
@@ -85,6 +86,32 @@ describe("buildMonthGrid", () => {
       const span = grid.rangeEnd.getTime() - grid.rangeStart.getTime();
       expect(span).toBe((grid.days.length * 24 - 1) * 60 * 60 * 1000);
     });
+  });
+});
+
+describe("chunkIntoWeeks", () => {
+  it("splits the grid into rows of seven", () => {
+    const grid = buildMonthGrid(new Date(2026, 2, 15), TORONTO);
+    const weeks = chunkIntoWeeks(grid.days);
+    expect(weeks).toHaveLength(grid.days.length / 7);
+    for (const week of weeks) expect(week).toHaveLength(7);
+  });
+
+  it("keeps the days in order and loses none", () => {
+    const grid = buildMonthGrid(new Date(2026, 2, 15), TORONTO);
+    const flattened = chunkIntoWeeks(grid.days).flat();
+    expect(flattened.map(toDateInput)).toEqual(grid.days.map(toDateInput));
+  });
+
+  it("starts every row on a Sunday, matching the header", () => {
+    const grid = buildMonthGrid(new Date(2026, 7, 1), TORONTO);
+    for (const week of chunkIntoWeeks(grid.days)) {
+      expect(week[0].getDay()).toBe(0);
+    }
+  });
+
+  it("handles an empty list", () => {
+    expect(chunkIntoWeeks([])).toEqual([]);
   });
 });
 

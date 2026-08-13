@@ -367,10 +367,31 @@
   -webkit-backdrop-filter: blur(12px) saturate(140%);
 }
 
-/* Calendar cells need a stable minimum height so an uneven month doesn't
-   produce jagged rows. */
+/* A calendar square is a fixed size, not a function of how busy that day is.
+   min-height was not enough: one Tuesday with five shifts stretched its whole
+   week and the month lost the even rhythm that makes it readable at a glance.
+   Detail moves into the panel that expands below the week instead, which costs
+   no height until someone asks for it. */
 @utility day-cell {
-  min-height: 8rem;
+  height: 7.25rem;
+  overflow: hidden;
+}
+
+/* The expanded day. Slides down from under its own week rather than fading in
+   place, so it reads as belonging to the row above it. Collapses to an instant
+   swap under prefers-reduced-motion along with everything else. */
+@keyframes day-detail-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+@utility day-detail {
+  animation: day-detail-in var(--duration-enter) var(--ease-out);
 }
 
 /* ---------------------------------------------------------------------------

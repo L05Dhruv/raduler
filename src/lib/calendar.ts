@@ -55,6 +55,21 @@ export function buildMonthGrid(month: Date, zone: string): MonthGrid {
 }
 
 /**
+ * Splits the grid's days into whole weeks.
+ *
+ * The grid is always a multiple of seven, so this is a plain chunk. It exists because the
+ * calendar renders each week as its own row: the panel for an expanded day is drawn
+ * *between* rows, and a single flat CSS grid has nowhere to put it.
+ */
+export function chunkIntoWeeks(days: Date[]): Date[][] {
+  const weeks: Date[][] = [];
+  for (let index = 0; index < days.length; index += 7) {
+    weeks.push(days.slice(index, index + 7));
+  }
+  return weeks;
+}
+
+/**
  * Buckets shifts by the calendar day they fall on *in `zone`*, so a cell lookup is O(1).
  *
  * The zone is what decides which square a shift lands in. A 21:00 Toronto shift is
