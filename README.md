@@ -54,6 +54,12 @@ the SQL editor run, in order:
 (`0002`–`0004` fix privileges on projects created before those defects were found. `0001`
 was corrected in place, so a fresh install skips them — see the header of each file.)
 
+**Re-seeding an existing project?** Run `supabase/reset_seed.sql` first. `seed.sql` adds rows
+rather than replacing them, so running it twice leaves the old roster beside the new one —
+including a stale `Breast Imaging` team and its shifts. The reset is scoped to the titles the
+seed publishes, so anything an administrator created is left alone, but it does destroy
+claims against demo shifts. Read its header before running it.
+
 Then under **Authentication → URL Configuration**, add both redirect URLs:
 
 ```
@@ -141,7 +147,7 @@ src/
 │  ├─ shiftHours.ts          resolves chosen hours inside a published shift
 │  └─ pdf/invoice.ts         browser-side invoice rendering
 └─ types/db.ts               mirrors the migration
-supabase/                    migration and seed
+supabase/                    migrations, seed, reset and privilege diagnostics
 tests/
 ├─ migrations.test.ts        applies the schema to real Postgres and probes the rules
 └─ *.test.ts                 unit tests for the date, pattern and CSV logic
