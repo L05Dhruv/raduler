@@ -1,0 +1,105 @@
+import { describe, expect, it } from "vitest";
+import { expandPattern, type ShiftPattern } from "@/lib/shiftPattern";
+import { summaryToCsv } from "@/lib/repositories/reports";
+import type { HoursSummaryRow } from "@/types/db";
+
+function pattern(overrides: Partial<ShiftPattern> = {}): ShiftPattern {
+  return {
+    title: "Day Read",
+    location: "Main Campus",
+    modality: "CT",
+    team_id: null,
+    required_role: "radiologist",
+    hourly_rate_cents: 26000,
+    notes: "",
+    from: "2026-03-02",
+    to: "2026-03-08",
+    startTime: "08:00",
+    durationHours: 8,
+    weekdays: [1, 2, 3, 4, 5],
+    ...overrides,
+  };
+}
+
+describe("expandPattern", () => {
+  it("emits one shift per selected weekday in the range", () => {
+    // 2–8 March 2026 is Mon–Sun, so weekdays give exactly five.
+    expect(expandPattern(pattern())).toHaveLength(5);
+  });
+
+  it("treats an empty weekday list as every day", () => {
+    expect(expandPattern(pattern({ weekdays: [] }))).toHaveLength(7);
+  });
+
+  it("keeps the wall-clock start time on each day", () => {
+    for (const shift of expandPattern(pattern())) {
+      expect(new Date(shift.starts_at).getHours()).toBe(8);
+    }
+  });
+
+  it("carries an overnight shift into the next calendar day", () => {
+    const [shift] = expandPattern(
+      pattern({ from: "2026-03-02", to: "2026-03-02", startTime: "23:00", weekdays: [] }),
+    );
+    const start = new Date(shift.starts_at);
+    const end = new Date(shift.ends_at);
+    expect(start.getDate()).toBe(2);
+    expect(end.getDate()).toBe(3);
+    expect(end.getTime() - start.getTime()).toBe(8 * 60 * 60 * 1000);
+  });
+
+  it("supports a fractional duration", () => {
+    const [shift] = expandPattern(
+      pattern({ from: "2026-03-02", to: "2026-03-02", durationHours: 8.5, weekdays: [] }),
+    );
+    expect(
+      new Date(shift.ends_at).getTime() - new Date(shift.starts_at).getTime(),
+    ).toBe(8.5 * 60 * 60 * 1000);
+  });
+
+  it("returns nothing when the range runs backwards", () => {
+    expect(expandPattern(pattern({ from: "2026-03-08", to: "2026-03-02" }))).toEqual([]);
+  });
+
+  it("holds the local start hour across a daylight-saving change", () => {
+    // North American DST begins on 8 March 2026; a naive UTC offset would shift
+    // every shift after it by an hour.
+    const shifts = expandPattern(
+      pattern({ from: "2026-03-06", to: "2026-03-10", weekdays: [] }),
+    );
+    expect(shifts.map((s) => new Date(s.starts_at).getHours())).toEqual([8, 8, 8, 8, 8]);
+  });
+});
+
+describe("summaryToCsv", () => {
+  const row = (overrides: Partial<HoursSummaryRow> = {}): HoursSummaryRow => ({
+    profile_id: "p1",
+    full_name: "Dana Patel",
+    role: "radiologist",
+    shifts_count: 3,
+    total_minutes: 1440,
+    total_cents: 624000,
+    ...overrides,
+  });
+
+  it("writes a header and one row per person", () => {
+    const lines = summaryToCsv([row()]).split("\r\n");
+    expect(lines[0]).toBe("Name,Role,Shifts,Hours,Earnings (CAD)");
+    expect(lines[1]).toBe("Dana Patel,radiologist,3,24,6240.00");
+  });
+
+  it("quotes a name containing a comma", () => {
+    expect(summaryToCsv([row({ full_name: "Patel, Dana" })])).toContain('"Patel, Dana"');
+  });
+
+  it("defuses a name that would otherwise run as a spreadsheet formula", () => {
+    const csv = summaryToCsv([row({ full_name: "=HYPERLINK(\"http://evil\")" })]);
+    expect(csv).toContain("'=HYPERLINK");
+  });
+
+  it("escapes embedded double quotes by doubling them", () => {
+    expect(summaryToCsv([row({ full_name: 'Dana "Dee" Patel' })])).toContain(
+      '"Dana ""Dee"" Patel"',
+    );
+  });
+});

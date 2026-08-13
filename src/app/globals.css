@@ -14,3 +14,25 @@
 .day-cell {
   min-height: 7.5rem;
 }
+
+/* Chart roles. One series, so one hue — stepped separately for each surface rather
+   than flipped, and validated at >= 3:1 against both. */
+.viz-root {
+  --series-1: #2a78d6;
+  --viz-grid: oklch(0% 0 0 / 10%);
+  --viz-text: oklch(35% 0 0);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) .viz-root {
+    --series-1: #3987e5;
+    --viz-grid: oklch(100% 0 0 / 14%);
+    --viz-text: oklch(80% 0 0);
+  }
+}
+
+:root[data-theme="dark"] .viz-root {
+  --series-1: #3987e5;
+  --viz-grid: oklch(100% 0 0 / 14%);
+  --viz-text: oklch(80% 0 0);
+}

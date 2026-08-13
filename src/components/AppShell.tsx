@@ -22,6 +22,7 @@ const USER_LINKS = [
 
 const ADMIN_LINKS = [
   { href: "/admin/shifts/", label: "Shifts", icon: Activity },
+  { href: "/admin/time-off/", label: "Requests", icon: Plane },
   { href: "/admin/teams/", label: "Teams", icon: Users },
   { href: "/admin/reports/", label: "Reports", icon: BarChart3 },
   { href: "/admin/invoices/", label: "Invoices", icon: FileText },
