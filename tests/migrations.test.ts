@@ -36,6 +36,7 @@ const INSTALL_ORDER = [
   "0005_flexible_hours.sql",
   "0006_timezones.sql",
   "0007_person_rates.sql",
+  "0008_practice_settings.sql",
 ];
 
 /**
@@ -1009,5 +1010,96 @@ describe("one rate per person", () => {
     await db.exec("reset role");
     expect(own.rows).toHaveLength(1);
     expect(Number(own.rows[0].hourly_rate_cents)).toBe(30000);
+  });
+});
+
+/**
+ * 0008. Configuration lives in a table because the database setting it used to live in
+ * cannot be set on Supabase: `postgres` owns the database but is not a superuser, and from
+ * PostgreSQL 15 a custom parameter at database level needs superuser. Verified against a
+ * live project — `42501: permission denied to set parameter` — which meant the reporting
+ * anchor silently stayed on UTC and the signup allowlist could never be turned on.
+ */
+describe("practice settings, without a superuser", () => {
+  it("defaults to UTC when nothing is configured", async () => {
+    await db.exec("reset app.practice_timezone");
+    await db.exec("update private.practice_settings set timezone = null where id");
+    expect(
+      (await row<{ practice_timezone: string }>("select public.practice_timezone()"))
+        .practice_timezone,
+    ).toBe("UTC");
+  });
+
+  it("lets an administrator set the zone through the RPC", async () => {
+    await as(CAROL);
+    const applied = await row<{ set_practice_settings: string }>(
+      `select public.set_practice_settings('America/New_York', 'practice.test')`,
+    );
+    expect(applied.set_practice_settings).toBe("America/New_York");
+  });
+
+  it("anchors reporting to it, with no database-level setting in play", async () => {
+    // The whole point. 20:00-23:00 on 31 August in New York is 1 September in UTC, so this
+    // is the same boundary case 0006 covers — now driven by the table instead.
+    const august = await row<{ total_minutes: string | null }>(
+      `select total_minutes from public.hours_summary('2026-08-01','2026-08-31')
+       where profile_id = '${BOB}'`,
+    );
+    expect(Number(august?.total_minutes ?? 0)).toBe(180);
+  });
+
+  it("refuses a zone Postgres does not recognise", async () => {
+    await as(CAROL);
+    const err = await refusal(
+      `select public.set_practice_settings('Mars/Olympus_Mons', null)`,
+    );
+    expect(err).toMatch(/Unknown time zone/);
+  });
+
+  it("refuses a non-administrator", async () => {
+    await as(ALICE);
+    const err = await refusal(
+      `select public.set_practice_settings('America/Toronto', null)`,
+    );
+    expect(err).toMatch(/Administrator access required/);
+  });
+
+  it("records the change, old value and new", async () => {
+    const audit = await row<{ old_zone: string | null; new_zone: string }>(`
+      select metadata -> 'old' ->> 'timezone' as old_zone,
+             metadata -> 'new' ->> 'timezone' as new_zone
+      from public.audit_log where action = 'settings.update' order by id limit 1
+    `);
+    expect(audit.new_zone).toBe("America/New_York");
+  });
+
+  it("keeps the settings row unreadable and unwritable directly", async () => {
+    const priv = await row<{ sel: boolean; upd: boolean }>(`
+      select has_table_privilege('authenticated', 'private.practice_settings', 'SELECT') as sel,
+             has_table_privilege('authenticated', 'private.practice_settings', 'UPDATE') as upd
+    `);
+    expect(priv.sel).toBe(false);
+    expect(priv.upd).toBe(false);
+  });
+
+  it("cannot hold a second row", async () => {
+    const err = await refusal(
+      "insert into private.practice_settings (id) values (false)",
+    );
+    expect(err).toBeTruthy();
+  });
+
+  it("enforces the signup allowlist that was previously inert", async () => {
+    const refused = await refusal(`
+      insert into auth.users (id, email)
+      values ('99999999-9999-9999-9999-999999999999', 'outsider@elsewhere.test')
+    `);
+    expect(refused).toMatch(/Email domain is not permitted/);
+
+    const accepted = await refusal(`
+      insert into auth.users (id, email)
+      values ('88888888-8888-8888-8888-888888888888', 'newhire@practice.test')
+    `);
+    expect(accepted).toBeNull();
   });
 });

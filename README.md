@@ -49,7 +49,8 @@ the SQL editor run, in order:
 2. `supabase/migrations/0005_flexible_hours.sql` — per-day hours within a published shift
 3. `supabase/migrations/0006_timezones.sql` — time zones, and the reporting-period anchor
 4. `supabase/migrations/0007_person_rates.sql` — one rate per person; drops the shift rate
-5. `supabase/seed.sql` — four teams and eight weeks of open shifts (optional)
+5. `supabase/migrations/0008_practice_settings.sql` — practice configuration, in a table
+6. `supabase/seed.sql` — four teams and eight weeks of open shifts (optional)
 
 (`0002`–`0004` fix privileges on projects created before those defects were found. `0001`
 was corrected in place, so a fresh install skips them — see the header of each file.)
@@ -67,22 +68,31 @@ http://localhost:3000/**
 https://l05dhruv.github.io/raduler/**
 ```
 
-**Set the practice's time zone.** Until you do, every reporting period runs on UTC days,
-which is not where the practice is:
+**Configure the practice.** Both of these are unset after a fresh install, and the first
+one matters immediately: until the zone is set, every reporting period runs on UTC days
+rather than the practice's.
 
 ```sql
-alter database postgres set app.practice_timezone = 'America/Toronto';
+update private.practice_settings
+set timezone = 'America/New_York', allowed_email_domains = 'yourpractice.com'
+where id;
 ```
 
-This is the zone shifts are published in and the zone a month boundary falls on. It is
-read by `hours_summary()` and `create_invoice()` and served to the browser through
-`practice_timezone()`, so there is one source for it rather than two that can drift.
+The zone is what shifts are published in and what a month boundary falls on. It is read by
+`hours_summary()` and `create_invoice()`, and served to the browser through
+`practice_timezone()`, so there is one source for it rather than two that can drift. The
+allowlist is what stops anyone registering; left null, signup is open.
 
-Restrict who may sign up (recommended before showing this to anyone):
+These used to be `alter database postgres set app.…` parameters, and that **cannot work on
+Supabase**. `postgres` owns the database but is not a superuser, and from PostgreSQL 15 a
+custom parameter at database level needs superuser — the SQL editor fails with `42501:
+permission denied to set parameter` just as the CLI does. `0008` moved them into
+`private.practice_settings`, one row, invisible to PostgREST. The old parameters are still
+read as a fallback, so a self-hosted project with a real superuser keeps working.
 
-```sql
-alter database postgres set app.allowed_email_domains = 'yourpractice.com';
-```
+An administrator signed into the app changes them through `set_practice_settings()`, which
+checks the caller and writes an audit row. From the SQL editor use the `update` above — a
+direct connection has no `auth.uid()`, so the RPC's admin check would refuse it.
 
 ### 2. Local development
 

@@ -114,9 +114,9 @@ Hours and money are grouped by calendar day, and a calendar day depends on a zon
 zones exist here — the practice's, a person's saved preference, and whatever zone their
 device is in right now — and only the first is allowed anywhere near a total.
 
-The practice zone is a database setting read inside `hours_summary()` and
-`create_invoice()`. The browser is told what it is, but never asked: the zone someone is
-reading in is session state that never leaves the tab. A figure that moved because its
+The practice zone lives in `private.practice_settings` and is read inside
+`hours_summary()` and `create_invoice()`. The browser is told what it is, but never asked:
+the zone someone is reading in is session state that never leaves the tab. A figure that moved because its
 reader boarded a plane would be indefensible, and there would be no way to tell from the
 invoice which zone had produced it.
 
@@ -162,10 +162,19 @@ cannot erase the record of it.
 A trigger on `auth.users` rejects addresses outside the practice's domains:
 
 ```sql
-alter database postgres set app.allowed_email_domains = 'yourpractice.com';
+update private.practice_settings set allowed_email_domains = 'yourpractice.com' where id;
 ```
 
-Left unset, anyone may register — acceptable while demoing, not otherwise.
+Left null, anyone may register — acceptable while demoing, not otherwise.
+
+**This control was inert until `0008`.** It read `current_setting('app.allowed_email_domains')`,
+which had to be set with `alter database postgres set …` — and that cannot be done on
+Supabase, where `postgres` owns the database but is not a superuser and PostgreSQL 15+
+requires superuser for a custom parameter at database level. The setting was therefore always
+empty and the allowlist always passed. It now reads `private.practice_settings`, a one-row
+table PostgREST does not expose, which no role can read or write directly: an administrator
+changes it through `set_practice_settings()`, which re-checks the caller and writes an audit
+row. The same defect left the reporting anchor on UTC — see above.
 
 ### Application hardening
 
